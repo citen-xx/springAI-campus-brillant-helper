@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.system.mapper.KnowledgeDocMapper">
+    
+    <resultMap type="KnowledgeDoc" id="KnowledgeDocResult">
+        <result property="docId"    column="doc_id"    />
+        <result property="docName"    column="doc_name"    />
+        <result property="fileUrl"    column="file_url"    />
+        <result property="status"    column="status"    />
+        <result property="createBy"    column="create_by"    />
+        <result property="createTime"    column="create_time"    />
+        <result property="updateBy"    column="update_by"    />
+        <result property="updateTime"    column="update_time"    />
+        <result property="remark"    column="remark"    />
+    </resultMap>
+
+    <sql id="selectKnowledgeDocVo">
+        select doc_id, doc_name, file_url, status, create_by, create_time, update_by, update_time, remark from knowledge_doc
+    </sql>
+
+    <select id="selectKnowledgeDocList" parameterType="KnowledgeDoc" resultMap="KnowledgeDocResult">
+        <include refid="selectKnowledgeDocVo"/>
+        <where>  
+            <if test="docName != null  and docName != ''"> and doc_name like concat('%', #{docName}, '%')</if>
+            <if test="fileUrl != null  and fileUrl != ''"> and file_url = #{fileUrl}</if>
+            <if test="status != null  and status != ''"> and status = #{status}</if>
+        </where>
+    </select>
+    
+    <select id="selectKnowledgeDocByDocId" parameterType="Long" resultMap="KnowledgeDocResult">
+        <include refid="selectKnowledgeDocVo"/>
+        where doc_id = #{docId}
+    </select>
+
+    <insert id="insertKnowledgeDoc" parameterType="KnowledgeDoc" useGeneratedKeys="true" keyProperty="docId">
+        insert into knowledge_doc
+        <trim prefix="(" suffix=")" suffixOverrides=",">
+            <if test="docName != null and docName != ''">doc_name,</if>
+            <if test="fileUrl != null">file_url,</if>
+            <if test="status != null">status,</if>
+            <if test="createBy != null">create_by,</if>
+            <if test="createTime != null">create_time,</if>
+            <if test="updateBy != null">update_by,</if>
+            <if test="updateTime != null">update_time,</if>
+            <if test="remark != null">remark,</if>
+         </trim>
+        <trim prefix="values (" suffix=")" suffixOverrides=",">
+            <if test="docName != null and docName != ''">#{docName},</if>
+            <if test="fileUrl != null">#{fileUrl},</if>
+            <if test="status != null">#{status},</if>
+            <if test="createBy != null">#{createBy},</if>
+            <if test="createTime != null">#{createTime},</if>
+            <if test="updateBy != null">#{updateBy},</if>
+            <if test="updateTime != null">#{updateTime},</if>
+            <if test="remark != null">#{remark},</if>
+         </trim>
+    </insert>
+
+    <update id="updateKnowledgeDoc" parameterType="KnowledgeDoc">
+        update knowledge_doc
+        <trim prefix="SET" suffixOverrides=",">
+            <if test="docName != null and docName != ''">doc_name = #{docName},</if>
+            <if test="fileUrl != null">file_url = #{fileUrl},</if>
+            <if test="status != null">status = #{status},</if>
+            <if test="createBy != null">create_by = #{createBy},</if>
+            <if test="createTime != null">create_time = #{createTime},</if>
+            <if test="updateBy != null">update_by = #{updateBy},</if>
+            <if test="updateTime != null">update_time = #{updateTime},</if>
+            <if test="remark != null">remark = #{remark},</if>
+        </trim>
+        where doc_id = #{docId}
+    </update>
+
+    <delete id="deleteKnowledgeDocByDocId" parameterType="Long">
+        delete from knowledge_doc where doc_id = #{docId}
+    </delete>
+
+    <delete id="deleteKnowledgeDocByDocIds" parameterType="String">
+        delete from knowledge_doc where doc_id in 
+        <foreach item="docId" collection="array" open="(" separator="," close=")">
+            #{docId}
+        </foreach>
+    </delete>
+</mapper>
