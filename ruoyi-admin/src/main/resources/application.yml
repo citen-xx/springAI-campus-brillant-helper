@@ -67,18 +67,18 @@ spring:
   devtools:
     restart:
       # 热部署开关
-      enabled: true
+      enabled: false
   data:
     # redis 配置
     redis:
       # 地址
-      host: localhost
+      host: 192.168.88.147
       # 端口，默认为6379
       port: 6379
       # 数据库索引
-      database: 0
+      database: 3
       # 密码
-      password:
+      password: 123456
       # 连接超时时间
       timeout: 10s
       lettuce:
@@ -145,3 +145,8 @@ xss:
   excludes: /system/notice
   # 匹配链接
   urlPatterns: /system/*,/monitor/*,/tool/*
+
+# Dify 大模型 API 配置
+dify:
+  api-url: http://localhost:8082/v1/chat-messages  # 必须是 8082！
+  api-key: "Bearer app-QWThPdvFIKjotas5b5zUqKfC"

@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.system.mapper.AiCommonQaMapper">
+    
+    <resultMap type="AiCommonQa" id="AiCommonQaResult">
+        <result property="qaId"    column="qa_id"    />
+        <result property="question"    column="question"    />
+        <result property="answer"    column="answer"    />
+        <result property="category"    column="category"    />
+        <result property="keywords"    column="keywords"    />
+        <result property="hitCount"    column="hit_count"    />
+        <result property="isHot"    column="is_hot"    />
+        <result property="cacheTtl"    column="cache_ttl"    />
+        <result property="status"    column="status"    />
+        <result property="createBy"    column="create_by"    />
+        <result property="createTime"    column="create_time"    />
+        <result property="updateTime"    column="update_time"    />
+        <result property="remark"    column="remark"    />
+    </resultMap>
+
+    <sql id="selectAiCommonQaVo">
+        select qa_id, question, answer, category, keywords, hit_count, is_hot, cache_ttl, status, create_by, create_time, update_time, remark from ai_common_qa
+    </sql>
+
+    <select id="selectAiCommonQaList" parameterType="AiCommonQa" resultMap="AiCommonQaResult">
+        <include refid="selectAiCommonQaVo"/>
+        <where>  
+            <if test="question != null  and question != ''"> and question = #{question}</if>
+            <if test="answer != null  and answer != ''"> and answer = #{answer}</if>
+            <if test="category != null  and category != ''"> and category = #{category}</if>
+            <if test="keywords != null  and keywords != ''"> and keywords = #{keywords}</if>
+            <if test="hitCount != null "> and hit_count = #{hitCount}</if>
+            <if test="isHot != null  and isHot != ''"> and is_hot = #{isHot}</if>
+            <if test="cacheTtl != null "> and cache_ttl = #{cacheTtl}</if>
+            <if test="status != null  and status != ''"> and status = #{status}</if>
+        </where>
+    </select>
+    
+    <select id="selectAiCommonQaByQaId" parameterType="Long" resultMap="AiCommonQaResult">
+        <include refid="selectAiCommonQaVo"/>
+        where qa_id = #{qaId}
+    </select>
+
+    <insert id="insertAiCommonQa" parameterType="AiCommonQa" useGeneratedKeys="true" keyProperty="qaId">
+        insert into ai_common_qa
+        <trim prefix="(" suffix=")" suffixOverrides=",">
+            <if test="question != null and question != ''">question,</if>
+            <if test="answer != null and answer != ''">answer,</if>
+            <if test="category != null">category,</if>
+            <if test="keywords != null">keywords,</if>
+            <if test="hitCount != null">hit_count,</if>
+            <if test="isHot != null">is_hot,</if>
+            <if test="cacheTtl != null">cache_ttl,</if>
+            <if test="status != null">status,</if>
+            <if test="createBy != null">create_by,</if>
+            <if test="createTime != null">create_time,</if>
+            <if test="updateTime != null">update_time,</if>
+            <if test="remark != null">remark,</if>
+         </trim>
+        <trim prefix="values (" suffix=")" suffixOverrides=",">
+            <if test="question != null and question != ''">#{question},</if>
+            <if test="answer != null and answer != ''">#{answer},</if>
+            <if test="category != null">#{category},</if>
+            <if test="keywords != null">#{keywords},</if>
+            <if test="hitCount != null">#{hitCount},</if>
+            <if test="isHot != null">#{isHot},</if>
+            <if test="cacheTtl != null">#{cacheTtl},</if>
+            <if test="status != null">#{status},</if>
+            <if test="createBy != null">#{createBy},</if>
+            <if test="createTime != null">#{createTime},</if>
+            <if test="updateTime != null">#{updateTime},</if>
+            <if test="remark != null">#{remark},</if>
+         </trim>
+    </insert>
+
+    <update id="updateAiCommonQa" parameterType="AiCommonQa">
+        update ai_common_qa
+        <trim prefix="SET" suffixOverrides=",">
+            <if test="question != null and question != ''">question = #{question},</if>
+            <if test="answer != null and answer != ''">answer = #{answer},</if>
+            <if test="category != null">category = #{category},</if>
+            <if test="keywords != null">keywords = #{keywords},</if>
+            <if test="hitCount != null">hit_count = #{hitCount},</if>
+            <if test="isHot != null">is_hot = #{isHot},</if>
+            <if test="cacheTtl != null">cache_ttl = #{cacheTtl},</if>
+            <if test="status != null">status = #{status},</if>
+            <if test="createBy != null">create_by = #{createBy},</if>
+            <if test="createTime != null">create_time = #{createTime},</if>
+            <if test="updateTime != null">update_time = #{updateTime},</if>
+            <if test="remark != null">remark = #{remark},</if>
+        </trim>
+        where qa_id = #{qaId}
+    </update>
+
+    <delete id="deleteAiCommonQaByQaId" parameterType="Long">
+        delete from ai_common_qa where qa_id = #{qaId}
+    </delete>
+
+    <delete id="deleteAiCommonQaByQaIds" parameterType="String">
+        delete from ai_common_qa where qa_id in 
+        <foreach item="qaId" collection="array" open="(" separator="," close=")">
+            #{qaId}
+        </foreach>
+    </delete>
+</mapper>

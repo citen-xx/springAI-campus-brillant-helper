@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.system.mapper.StudentMapper">
+    
+    <resultMap type="Student" id="StudentResult">
+        <result property="studentId"    column="student_id"    />
+        <result property="password"    column="password"    />
+        <result property="studentName"    column="student_name"    />
+        <result property="majorCode"    column="major_code"    />
+        <result property="createTime"    column="create_time"    />
+    </resultMap>
+
+    <sql id="selectStudentVo">
+        select student_id, password, student_name, major_code, create_time from student
+    </sql>
+
+    <select id="selectStudentList" parameterType="Student" resultMap="StudentResult">
+        <include refid="selectStudentVo"/>
+        <where>  
+            <if test="password != null  and password != ''"> and password = #{password}</if>
+            <if test="studentName != null  and studentName != ''"> and student_name like concat('%', #{studentName}, '%')</if>
+            <if test="majorCode != null  and majorCode != ''"> and major_code = #{majorCode}</if>
+        </where>
+    </select>
+    
+    <select id="selectStudentByStudentId" parameterType="String" resultMap="StudentResult">
+        <include refid="selectStudentVo"/>
+        where student_id = #{studentId}
+    </select>
+
+    <insert id="insertStudent" parameterType="Student">
+        insert into student
+        <trim prefix="(" suffix=")" suffixOverrides=",">
+            <if test="studentId != null">student_id,</if>
+            <if test="password != null and password != ''">password,</if>
+            <if test="studentName != null">student_name,</if>
+            <if test="majorCode != null">major_code,</if>
+            <if test="createTime != null">create_time,</if>
+         </trim>
+        <trim prefix="values (" suffix=")" suffixOverrides=",">
+            <if test="studentId != null">#{studentId},</if>
+            <if test="password != null and password != ''">#{password},</if>
+            <if test="studentName != null">#{studentName},</if>
+            <if test="majorCode != null">#{majorCode},</if>
+            <if test="createTime != null">#{createTime},</if>
+         </trim>
+    </insert>
+
+    <update id="updateStudent" parameterType="Student">
+        update student
+        <trim prefix="SET" suffixOverrides=",">
+            <if test="password != null and password != ''">password = #{password},</if>
+            <if test="studentName != null">student_name = #{studentName},</if>
+            <if test="majorCode != null">major_code = #{majorCode},</if>
+            <if test="createTime != null">create_time = #{createTime},</if>
+        </trim>
+        where student_id = #{studentId}
+    </update>
+
+    <delete id="deleteStudentByStudentId" parameterType="String">
+        delete from student where student_id = #{studentId}
+    </delete>
+
+    <delete id="deleteStudentByStudentIds" parameterType="String">
+        delete from student where student_id in 
+        <foreach item="studentId" collection="array" open="(" separator="," close=")">
+            #{studentId}
+        </foreach>
+    </delete>
+</mapper>

@@ -18,10 +18,12 @@
     <dependencies>
 
         <!-- spring-boot-devtools -->
+
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-devtools</artifactId>
-            <optional>true</optional> <!-- 表示依赖不会传递 -->
+            <artifactId>spring-boot-starter-webflux</artifactId>
+            <version>${spring-boot.version}</version>
         </dependency>
 
         <!-- spring-doc -->
@@ -42,6 +44,7 @@
             <artifactId>ruoyi-framework</artifactId>
         </dependency>
 
+
         <!-- 定时任务-->
         <dependency>
             <groupId>com.ruoyi</groupId>
@@ -53,6 +56,19 @@
             <groupId>com.ruoyi</groupId>
             <artifactId>ruoyi-generator</artifactId>
         </dependency>
+
+<!-- 通用工具-->
+<dependency>
+    <groupId>com.ruoyi</groupId>
+    <artifactId>ruoyi-common</artifactId>
+</dependency>
+
+        <!-- 系统模块-->
+        <dependency>
+            <groupId>com.ruoyi</groupId>
+            <artifactId>ruoyi-system</artifactId>
+        </dependency>
+
 
     </dependencies>
 
