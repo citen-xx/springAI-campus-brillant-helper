@@ -5,7 +5,7 @@ import io.jsonwebtoken.Claims;
 
 /**
  * 通用常量信息
- * 
+ *
  * @author ruoyi
  */
 public class Constants
@@ -106,7 +106,7 @@ public class Constants
     public static final String TOKEN_PREFIX = "Bearer ";
 
     /**
-     * 令牌前缀
+     * 登录用户 key
      */
     public static final String LOGIN_USER_KEY = "login_user_key";
 
@@ -136,7 +136,7 @@ public class Constants
     public static final String JWT_AUTHORITIES = "authorities";
 
     /**
-     * 资源映射路径 前缀
+     * 资源映射路径前缀
      */
     public static final String RESOURCE_PREFIX = "/profile";
 
@@ -156,18 +156,7 @@ public class Constants
     public static final String LOOKUP_LDAPS = "ldaps:";
 
     /**
-     * 自动识别json对象白名单配置（仅允许解析的包名，范围越小越安全）
+     * 自动识别 JSON 对象白名单配置
      */
     public static final String[] JSON_WHITELIST_STR = { "com.ruoyi" };
-
-    /**
-     * 定时任务白名单配置（仅允许访问的包名，如其他需要可以自行添加）
-     */
-    public static final String[] JOB_WHITELIST_STR = { "com.ruoyi.quartz.task" };
-
-    /**
-     * 定时任务违规的字符
-     */
-    public static final String[] JOB_ERROR_STR = { "java.net.URL", "javax.naming.InitialContext", "org.yaml.snakeyaml",
-            "org.springframework", "org.apache", "com.ruoyi.common.utils.file", "com.ruoyi.common.config", "com.ruoyi.generator" };
 }

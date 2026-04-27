@@ -5,16 +5,20 @@ package com.ruoyi.common.enums;
  *
  * @author ruoyi
  */
-
 public enum LimitType
 {
     /**
-     * 默认策略全局限流
+     * 默认策略，全局限流
      */
     DEFAULT,
 
     /**
-     * 根据请求者IP进行限流
+     * 基于请求 IP 限流
      */
-    IP
+    IP,
+
+    /**
+     * 基于当前登录用户 ID 限流，取不到用户时回退到 IP
+     */
+    USER_ID
 }

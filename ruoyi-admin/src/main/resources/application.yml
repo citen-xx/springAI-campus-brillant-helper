@@ -150,3 +150,7 @@ xss:
 dify:
   api-url: http://localhost:8082/v1/chat-messages  # 必须是 8082！
   api-key: "Bearer app-QWThPdvFIKjotas5b5zUqKfC"
+  knowledge:
+    upload-url: http://localhost:8082/v1/datasets/documents
+    dataset-id: mock-dataset-id
+    mock-enabled: true

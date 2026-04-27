@@ -1,29 +1,38 @@
 <template>
-  <div class="chat-container">
-    <div class="chat-header">
-      <h2>🤖 校园智能知识库助手</h2>
-      <span class="subtitle">基于大模型与 RAG 技术驱动</span>
-    </div>
+  <div class="chat-page">
+    <div class="chat-shell">
+      <div class="chat-header">
+        <div>
+          <h2>AI Stream Chat</h2>
+          <p>Using fetch + ReadableStream to render SSE output word by word.</p>
+        </div>
+        <el-tag size="small" type="success">SSE</el-tag>
+      </div>
 
-    <div class="chat-main" ref="chatListRef">
-      <div v-for="(msg, index) in messageList" :key="index"
-        :class="['message-row', msg.role === 'user' ? 'row-right' : 'row-left']">
-        <div class="avatar">{{ msg.role === 'user' ? '🧑‍🎓' : '🤖' }}</div>
-        <div class="message-bubble">
-          <template v-if="msg.role === 'user'">
-            {{ msg.content }}
-          </template>
-          <div v-else class="markdown-body" v-html="renderMarkdown(msg.content)"></div>
+      <div ref="messageListRef" class="message-list">
+        <div
+          v-for="(message, index) in messages"
+          :key="index"
+          :class="['message-row', message.role === 'user' ? 'is-user' : 'is-assistant']"
+        >
+          <div class="avatar">{{ message.role === 'user' ? 'U' : 'AI' }}</div>
+          <div class="bubble">{{ message.content }}</div>
         </div>
       </div>
-    </div>
 
-    <div class="chat-footer">
-      <el-input v-model="inputText" type="textarea" :rows="3" placeholder="请输入你想咨询的问题，或让 AI 写一段代码试试..."
-        @keyup.enter.native="sendMessage" resize="none" />
-      <div class="send-btn-wrap">
-        <el-button type="primary" size="medium" @click="sendMessage">发送消息 <i
-            class="el-icon-s-promotion"></i></el-button>
+      <div class="composer">
+        <el-input
+          v-model="inputText"
+          type="textarea"
+          :rows="4"
+          resize="none"
+          placeholder="Type your message and watch the reply stream back from the server."
+          @keyup.ctrl.enter.native="sendMessage"
+        />
+        <div class="composer-actions">
+          <span class="tip">Press Ctrl + Enter to send</span>
+          <el-button type="primary" :loading="sending" @click="sendMessage">Send</el-button>
+        </div>
       </div>
     </div>
   </div>
@@ -31,280 +40,274 @@
 
 <script>
 import { getToken } from '@/utils/auth'
-// 引入 Markdown 解析和代码高亮插件
-import { marked } from 'marked'
-import hljs from 'highlight.js'
-import 'highlight.js/styles/atom-one-dark.css' // 引入 Atom One Dark 暗黑风格代码主题
-
-// 全局配置 Marked 解析器
-marked.setOptions({
-  highlight: function (code, lang) {
-    if (lang && hljs.getLanguage(lang)) {
-      return hljs.highlight(code, { language: lang }).value;
-    }
-    return hljs.highlightAuto(code).value;
-  },
-  langPrefix: 'hljs language-',
-  breaks: true, // 允许回车自动换行
-  gfm: true     // 支持 GitHub 风格的 Markdown (表格、删除线等)
-});
 
 export default {
   name: 'AiChat',
   data() {
     return {
       inputText: '',
-      messageList: [
-        { role: 'ai', content: '同学你好！我是校园智能助手。\n\n你可以问我规章制度，也可以让我**写一段代码**试试哦！' }
+      sending: false,
+      messages: [
+        {
+          role: 'assistant',
+          content: 'Welcome. Ask any question and the server will stream back a mock LLM response.'
+        }
       ]
     }
   },
   methods: {
-    // 将普通文本转为 HTML
-    renderMarkdown(text) {
-      if (!text) return '';
-      return marked.parse(text);
-    },
-
     async sendMessage() {
-      if (!this.inputText.trim()) return;
+      const prompt = this.inputText.trim()
+      if (!prompt || this.sending) {
+        return
+      }
 
-      const question = this.inputText;
-      this.messageList.push({ role: 'user', content: question });
-      this.inputText = '';
-      this.scrollToBottom();
-
-      const aiMessage = { role: 'ai', content: '' };
-      this.messageList.push(aiMessage);
+      this.messages.push({ role: 'user', content: prompt })
+      const assistantMessage = { role: 'assistant', content: '' }
+      this.messages.push(assistantMessage)
+      this.inputText = ''
+      this.sending = true
+      this.scrollToBottom()
 
       try {
-        const response = await fetch(process.env.VUE_APP_BASE_API + '/system/ai/chat', {
+        const response = await fetch(`${process.env.VUE_APP_BASE_API}/api/ai/chat/stream`, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + getToken()
-          },
-          body: JSON.stringify({ query: question })
-        });
+          headers: this.buildHeaders(),
+          body: JSON.stringify({ prompt })
+        })
 
-        if (!response.ok) throw new Error('网络请求失败, 状态码: ' + response.status);
+        if (!response.ok) {
+          throw new Error(await this.extractErrorMessage(response, `Request failed with status ${response.status}`))
+        }
 
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder('utf-8');
-        let buffer = '';
+        if (!response.body) {
+          throw new Error('大模型流式响应不可用，请稍后再试')
+        }
+
+        const contentType = (response.headers.get('content-type') || '').toLowerCase()
+        if (!contentType.includes('text/event-stream')) {
+          throw new Error(await this.extractErrorMessage(response, '大模型额度已耗尽，请稍后再试'))
+        }
+
+        const reader = response.body.getReader()
+        const decoder = new TextDecoder('utf-8')
+        let buffer = ''
 
         while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          const chunk = decoder.decode(value, { stream: true });
-          buffer += chunk;
-
-          const lines = buffer.split('\n');
-          buffer = lines.pop();
-
-          for (const line of lines) {
-            if (line.startsWith('data:')) {
-              const dataStr = line.substring(5).trim();
-              if (!dataStr || dataStr === '[DONE]') continue;
-
-              try {
-                const data = JSON.parse(dataStr);
-                if (data.answer !== undefined && data.answer !== null) {
-                  aiMessage.content += data.answer;
-                  this.scrollToBottom(); // 每次拼接新字，滚动条都沉底
-                }
-                else if (data.code || data.message) {
-                  aiMessage.content += `\n**[系统提示：连接异常 - ${data.message || data.code}]**`;
-                  this.scrollToBottom();
-                }
-              } catch (e) {
-                // 忽略非 JSON 数据
-              }
-            }
+          const { done, value } = await reader.read()
+          if (done) {
+            break
           }
+
+          buffer += decoder.decode(value, { stream: true })
+          const chunks = buffer.split(/\r?\n\r?\n/)
+          buffer = chunks.pop() || ''
+
+          chunks.forEach((chunk) => {
+            this.consumeSseChunk(chunk, assistantMessage)
+          })
+        }
+
+        if (buffer) {
+          this.consumeSseChunk(buffer, assistantMessage)
         }
       } catch (error) {
-        aiMessage.content = '抱歉，大脑连接异常，请检查网络。';
+        const message = error.message || '大模型额度已耗尽，请稍后再试'
+        assistantMessage.content = message
+        this.$message.error(message)
+      } finally {
+        this.sending = false
+        this.scrollToBottom()
       }
     },
+    async extractErrorMessage(response, fallbackMessage) {
+      try {
+        const payload = await response.clone().json()
+        return payload.msg || payload.message || fallbackMessage
+      } catch (jsonError) {
+        try {
+          const text = await response.text()
+          return text || fallbackMessage
+        } catch (textError) {
+          return fallbackMessage
+        }
+      }
+    },
+    buildHeaders() {
+      const headers = {
+        'Content-Type': 'application/json'
+      }
+      const token = getToken()
+      if (token) {
+        headers.Authorization = `Bearer ${token}`
+      }
+      return headers
+    },
+    consumeSseChunk(chunk, assistantMessage) {
+      const lines = chunk.split(/\r?\n/)
+      let data = ''
 
+      lines.forEach((line) => {
+        if (line.startsWith('data:')) {
+          data += line.slice(5).trimStart()
+        }
+      })
+
+      if (data) {
+        assistantMessage.content += data
+        this.scrollToBottom()
+      }
+    },
     scrollToBottom() {
       this.$nextTick(() => {
-        const chatList = this.$refs.chatListRef;
-        if (chatList) {
-          chatList.scrollTop = chatList.scrollHeight;
+        const container = this.$refs.messageListRef
+        if (container) {
+          container.scrollTop = container.scrollHeight
         }
-      });
+      })
     }
   }
 }
 </script>
 
 <style scoped>
-.chat-container {
+.chat-page {
+  min-height: calc(100vh - 84px);
+  padding: 24px;
+  background:
+    radial-gradient(circle at top left, rgba(24, 144, 255, 0.14), transparent 32%),
+    linear-gradient(180deg, #f6fbff 0%, #eef3f8 100%);
+}
+
+.chat-shell {
+  max-width: 980px;
+  height: calc(100vh - 132px);
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 120px);
-  background-color: #f4f6f8;
-  padding: 20px;
-  box-sizing: border-box;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(24, 144, 255, 0.12);
+  border-radius: 24px;
+  box-shadow: 0 20px 40px rgba(30, 60, 90, 0.08);
+  backdrop-filter: blur(8px);
+  overflow: hidden;
 }
 
 .chat-header {
-  text-align: center;
-  margin-bottom: 20px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 24px 28px 20px;
+  border-bottom: 1px solid #e8f1fb;
 }
 
 .chat-header h2 {
   margin: 0;
-  color: #333;
+  font-size: 28px;
+  line-height: 1.2;
+  color: #16324f;
 }
 
-.chat-header .subtitle {
-  font-size: 12px;
-  color: #888;
+.chat-header p {
+  margin: 8px 0 0;
+  color: #5f7590;
+  font-size: 14px;
 }
 
-.chat-main {
+.message-list {
   flex: 1;
   overflow-y: auto;
-  background: #fff;
-  border-radius: 10px;
-  padding: 20px;
-  margin-bottom: 20px;
-  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.05);
+  padding: 28px;
 }
 
 .message-row {
   display: flex;
-  margin-bottom: 20px;
   align-items: flex-start;
+  margin-bottom: 18px;
+  gap: 12px;
 }
 
-.row-left {
-  flex-direction: row;
-}
-
-.row-left .message-bubble {
-  background-color: #f9fbfd;
-  color: #333;
-  margin-left: 15px;
-  border-radius: 0 10px 10px 10px;
-  border: 1px solid #eef2f5;
-}
-
-.row-right {
+.message-row.is-user {
   flex-direction: row-reverse;
 }
 
-.row-right .message-bubble {
-  background-color: #1890ff;
-  color: #fff;
-  margin-right: 15px;
-  border-radius: 10px 0 10px 10px;
-}
-
 .avatar {
-  font-size: 30px;
-  width: 40px;
-  height: 40px;
-  line-height: 40px;
-  text-align: center;
+  width: 42px;
+  height: 42px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 14px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #16324f;
+  background: linear-gradient(135deg, #d7e9ff 0%, #f7fbff 100%);
+  border: 1px solid #c6ddfb;
 }
 
-/* 气泡基础样式 */
-.message-bubble {
-  max-width: 75%;
-  padding: 12px 18px;
+.bubble {
+  max-width: min(78%, 680px);
+  padding: 14px 16px;
+  border-radius: 18px;
+  line-height: 1.7;
   font-size: 15px;
-  line-height: 1.6;
-  word-wrap: break-word;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #1f3247;
+  background: #ffffff;
+  border: 1px solid #e6eef7;
+  box-shadow: 0 10px 18px rgba(45, 76, 107, 0.06);
 }
 
-/* =====================================
-   🎯 专属 Markdown 渲染样式库
-====================================== */
-.markdown-body {
-  font-size: 15px;
-  color: #24292e;
+.message-row.is-user .bubble {
+  color: #ffffff;
+  background: linear-gradient(135deg, #1890ff 0%, #0f6fd1 100%);
+  border-color: transparent;
 }
 
-/* 段落与列表 */
-::v-deep .markdown-body p {
-  margin-top: 0;
-  margin-bottom: 10px;
+.composer {
+  padding: 20px 24px 24px;
+  border-top: 1px solid #e8f1fb;
+  background: rgba(250, 252, 255, 0.88);
 }
 
-::v-deep .markdown-body p:last-child {
-  margin-bottom: 0;
+.composer-actions {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
-::v-deep .markdown-body ul,
-::v-deep .markdown-body ol {
-  padding-left: 20px;
-  margin-top: 5px;
-  margin-bottom: 10px;
+.tip {
+  color: #72879e;
+  font-size: 13px;
 }
 
-/* 行内代码块（文字中间的灰色小底纹代码） */
-::v-deep .markdown-body code {
-  background-color: rgba(27, 31, 35, 0.05);
-  padding: 0.2em 0.4em;
-  border-radius: 3px;
-  font-family: SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
-  font-size: 85%;
-  color: #e36209;
-}
+@media (max-width: 768px) {
+  .chat-page {
+    padding: 12px;
+  }
 
-/* 多行代码块（极客黑框） */
-::v-deep .markdown-body pre {
-  background-color: #0d1117;
-  /* 深色背景 */
-  padding: 16px;
-  border-radius: 8px;
-  overflow-x: auto;
-  margin: 10px 0;
-}
+  .chat-shell {
+    height: calc(100vh - 104px);
+    border-radius: 18px;
+  }
 
-::v-deep .markdown-body pre code {
-  background-color: transparent;
-  padding: 0;
-  color: #c9d1d9;
-  /* 浅色代码 */
-  font-size: 14px;
-}
+  .chat-header,
+  .message-list,
+  .composer {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
 
-/* 表格样式 */
-::v-deep .markdown-body table {
-  border-collapse: collapse;
-  width: 100%;
-  margin: 10px 0;
-}
+  .chat-header h2 {
+    font-size: 22px;
+  }
 
-::v-deep .markdown-body th,
-::v-deep .markdown-body td {
-  border: 1px solid #dfe2e5;
-  padding: 6px 13px;
-}
-
-::v-deep .markdown-body th {
-  background-color: #f6f8fa;
-  font-weight: 600;
-}
-
-.chat-footer {
-  position: relative;
-  background: #fff;
-  border-radius: 10px;
-  padding: 10px;
-  box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.05);
-}
-
-.send-btn-wrap {
-  position: absolute;
-  right: 20px;
-  bottom: 20px;
+  .bubble {
+    max-width: 86%;
+  }
 }
 </style>
