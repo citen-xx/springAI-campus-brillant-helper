@@ -154,8 +154,19 @@ export default {
       })
 
       if (data) {
-        assistantMessage.content += data
-        this.scrollToBottom()
+        try {
+          const payload = JSON.parse(data)
+          if (payload.event === 'message' && payload.answer) {
+            assistantMessage.content += payload.answer
+            this.scrollToBottom()
+          } else if (payload.msg || payload.message) {
+            assistantMessage.content += payload.msg || payload.message
+            this.scrollToBottom()
+          }
+        } catch (e) {
+          assistantMessage.content += data
+          this.scrollToBottom()
+        }
       }
     },
     scrollToBottom() {

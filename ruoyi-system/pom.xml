@@ -16,13 +16,25 @@
     </description>
 
     <dependencies>
-
-        <!-- 通用工具-->
         <dependency>
             <groupId>com.ruoyi</groupId>
             <artifactId>ruoyi-common</artifactId>
         </dependency>
 
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-openai-spring-boot-starter</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-redis-store-spring-boot-starter</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-tika-document-reader</artifactId>
+        </dependency>
 
         <dependency>
             <groupId>cn.hutool</groupId>
@@ -49,20 +61,16 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- 引入 Spring Boot 官方 Redis 支持，解决 RedisAutoConfiguration 找不到的问题 -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
 
-        <!-- 引入 Redisson 核心包（不依赖Spring Boot的自动装配以兼容当前版本） -->
         <dependency>
             <groupId>org.redisson</groupId>
             <artifactId>redisson</artifactId>
             <version>3.27.0</version>
         </dependency>
-
-
     </dependencies>
 
 </project>

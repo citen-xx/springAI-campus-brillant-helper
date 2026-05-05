@@ -1,41 +1,61 @@
 package com.ruoyi.web.controller.system;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ruoyi.common.annotation.Anonymous;
-import com.ruoyi.common.core.redis.RedisCache; // 若依自带的 Redis 工具！
-import com.ruoyi.common.utils.SecurityUtils;
+import com.ruoyi.common.core.redis.RedisCache;
 import com.ruoyi.common.utils.StringUtils;
+import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.client.advisor.QuestionAnswerAdvisor;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.vectorstore.SearchRequest;
+import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.beans.factory.annotation.Autowired;
-import jakarta.annotation.PostConstruct; // ✅ Spring Boot 3.x 正确版本
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
-import org.springframework.web.bind.annotation.*;
-import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
-
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Collections;
-import java.util.concurrent.TimeUnit;
 
 @RestController
 @Anonymous
 @RequestMapping("/system/ai")
-public class AiController {
+public class AiController
+{
+    private static final Logger log = LoggerFactory.getLogger(AiController.class);
 
-    // 1. 注入若依自带的 Redis 工具
-    @Autowired
-    private RedisCache redisCache;
-
-    @Autowired
-    private StringRedisTemplate stringRedisTemplate;
+    private final RedisCache redisCache;
+    private final StringRedisTemplate stringRedisTemplate;
+    private final ChatClient chatClient;
+    private final VectorStore vectorStore;
+    private final ObjectMapper objectMapper;
 
     private DefaultRedisScript<Long> limitScript;
 
+    @Autowired
+    public AiController(RedisCache redisCache, StringRedisTemplate stringRedisTemplate, ChatModel chatModel,
+        VectorStore vectorStore, ObjectMapper objectMapper)
+    {
+        this.redisCache = redisCache;
+        this.stringRedisTemplate = stringRedisTemplate;
+        this.chatClient = ChatClient.create(chatModel);
+        this.vectorStore = vectorStore;
+        this.objectMapper = objectMapper;
+    }
+
     @PostConstruct
-    public void init() {
+    public void init()
+    {
         limitScript = new DefaultRedisScript<>();
         limitScript.setResultType(Long.class);
         limitScript.setScriptText(
@@ -56,92 +76,93 @@ public class AiController {
         );
     }
 
-    @Value("${dify.api-url}")
-    private String apiUrl;
-
-    @Value("${dify.api-key}")
-    private String apiKey;
-
-    private final WebClient webClient;
-    private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(AiController.class);
-
-    public AiController(WebClient.Builder webClientBuilder) {
-        this.webClient = webClientBuilder.build();
-    }
-
+    /**
+     * AI 问答接口
+     *
+     * 1. 保留 Redis 缓存查询
+     * 2. 保留 Lua 滑动窗口限流
+     * 3. 使用 Spring AI ChatClient + QuestionAnswerAdvisor 做 RAG
+     * 4. 返回前端可直接消费的 SSE 格式
+     */
     @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<String> chat(@RequestBody Map<String, String> request) {
+    public Flux<String> chat(@RequestBody Map<String, String> request)
+    {
         String query = request.get("query");
         String user = request.getOrDefault("user", "campus-student");
 
-        // ==========================================
-        // 🛡️ 动态滑动窗口限流器 (防止刷单耗尽 Token)
-        // ==========================================
+        if (StringUtils.isEmpty(query))
+        {
+            return Flux.just(toSse("query 不能为空"));
+        }
+
+        // =========================
+        // 1. Redis 缓存优先返回
+        // =========================
+        String cacheKey = "ai:qa:" + query.trim();
+        String cachedAnswer = redisCache.getCacheObject(cacheKey);
+        if (StringUtils.isNotEmpty(cachedAnswer))
+        {
+            log.info("Cache hit, query={}", query);
+            return Flux.just(toSse(cachedAnswer));
+        }
+
+        // =========================
+        // 2. Lua 滑动窗口限流
+        // =========================
         String rateLimitKey = "ai:rate_limit:" + user;
-        long windowSizeMs = 60000; // 窗口大小 1 分钟
-        long maxRequests = 10;     // 每分钟最多请求 10 次
+        long windowSizeMs = 60000L;
+        long maxRequests = 10L;
         long currentTimeMs = System.currentTimeMillis();
 
         Long isAllowed = stringRedisTemplate.execute(
-                limitScript,
-                Collections.singletonList(rateLimitKey),
-                String.valueOf(windowSizeMs),
-                String.valueOf(maxRequests),
-                String.valueOf(currentTimeMs)
+            limitScript,
+            Collections.singletonList(rateLimitKey),
+            String.valueOf(windowSizeMs),
+            String.valueOf(maxRequests),
+            String.valueOf(currentTimeMs)
         );
 
-        if (isAllowed == null || isAllowed == 0L) {
-            log.warn("🚨 用户 {} 请求频繁被限流", user);
-            return Flux.just("data: {\"event\": \"message\", \"answer\": \"请求过于频繁，请稍后再试。您的提问配额已用完。\"}\n\n");
+        if (isAllowed == null || isAllowed == 0L)
+        {
+            log.warn("Rate limited, user={}, query={}", user, query);
+            return Flux.just(toSse("请求过于频繁，请稍后再试"));
         }
 
-        // ==========================================
-        // 🚀 核心优化：防大模型 Token 消耗的精准拦截层
-        // ==========================================
-        String cacheKey = "ai:qa:" + query.trim();
+        // =========================
+        // 3. Spring AI + RAG 检索
+        // =========================
+        QuestionAnswerAdvisor advisor = QuestionAnswerAdvisor.builder(vectorStore)
+            .searchRequest(SearchRequest.builder()
+                .query(query)
+                .topK(4)
+                .similarityThreshold(0.7d)
+                .build())
+            .build();
 
-        // 第一步：先查 Redis 缓存
-        String cachedAnswer = redisCache.getCacheObject(cacheKey);
-        if (StringUtils.isNotEmpty(cachedAnswer)) {
-            log.info("🎯 命中 Redis 缓存，直接返回！问题: {}", query);
-            // 组装成流式格式返回给前端，前端毫无察觉
-            String json = "{\"event\": \"message\", \"answer\": \"" + cachedAnswer + "\"}";
-            return Flux.just("data: " + json + "\n\n");
+        return chatClient.prompt()
+            .user(query)
+            .advisors(advisor)
+            .stream()
+            .content()
+            .map(this::toSse)
+            .onErrorResume(ex -> {
+                log.error("AI stream error, query={}", query, ex);
+                return Flux.just(toSse("系统繁忙，请稍后再试"));
+            });
+    }
+
+    private String toSse(String answer)
+    {
+        try
+        {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("event", "message");
+            payload.put("answer", answer);
+            return "data: " + objectMapper.writeValueAsString(payload) + "\n\n";
         }
-
-        /* // 第二步：缓存没有，查 MySQL 数据库 (标准问题库)
-        // 注意：把这段代码的注释解开，换成你真实的方法名
-        AiCommonQa qa = aiCommonQaService.selectByQuestion(query);
-        if (qa != null) {
-            log.info("📚 命中 MySQL 标准库，写入缓存并返回！");
-            // 存入 Redis，设置 24 小时过期
-            redisCache.setCacheObject(cacheKey, qa.getAnswer(), 24, TimeUnit.HOURS);
-            String json = "{\"event\": \"message\", \"answer\": \"" + qa.getAnswer() + "\"}";
-            return Flux.just("data: " + json + "\n\n");
+        catch (JsonProcessingException e)
+        {
+            throw new RuntimeException("SSE 消息序列化失败", e);
         }
-        */
-
-        // 第三步：数据库也没有，只能去求助 Dify 大模型了！
-        log.info("☁️ 缓存未命中，开始向 Dify 大模型请求: {}", query);
-
-        Map<String, Object> difyPayload = new HashMap<>();
-        difyPayload.put("inputs", new HashMap<>());
-        difyPayload.put("query", query);
-        difyPayload.put("response_mode", "streaming");
-        difyPayload.put("user", user);
-
-        String safeApiKey = apiKey.trim().startsWith("Bearer ") ? apiKey.trim() : "Bearer " + apiKey.trim();
-
-        return webClient.post()
-                .uri(apiUrl)
-                .header(HttpHeaders.AUTHORIZATION, safeApiKey)
-                .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE)
-                .bodyValue(difyPayload)
-                .retrieve()
-                .bodyToFlux(String.class)
-                .onErrorResume(e -> {
-                    log.error("💥 大模型连接异常: ", e);
-                    return Flux.just("data: {\"event\": \"message\", \"answer\": \"系统网络繁忙，请稍后再试\"}\n\n");
-                });
     }
 }
