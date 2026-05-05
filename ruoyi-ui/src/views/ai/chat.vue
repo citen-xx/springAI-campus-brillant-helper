@@ -2,11 +2,15 @@
   <div class="chat-page">
     <div class="chat-shell">
       <div class="chat-header">
-        <div>
-          <h2>AI Stream Chat</h2>
-          <p>Using fetch + ReadableStream to render SSE output word by word.</p>
+        <div class="header-main">
+          <h2>Campus AI Chat</h2>
+          <p>当前默认接入带 RAG、会话记忆与 Function Calling 的流式聊天接口。</p>
         </div>
-        <el-tag size="small" type="success">SSE</el-tag>
+        <div class="header-side">
+          <el-tag size="small" type="success">SSE</el-tag>
+          <el-tag size="small" type="info">conversation: {{ shortConversationId }}</el-tag>
+          <el-button size="mini" plain @click="resetConversation">新会话</el-button>
+        </div>
       </div>
 
       <div ref="messageListRef" class="message-list">
@@ -26,12 +30,12 @@
           type="textarea"
           :rows="4"
           resize="none"
-          placeholder="Type your message and watch the reply stream back from the server."
+          placeholder="请输入问题，系统会自动携带 conversationId 进行多轮上下文对话。"
           @keyup.ctrl.enter.native="sendMessage"
         />
         <div class="composer-actions">
-          <span class="tip">Press Ctrl + Enter to send</span>
-          <el-button type="primary" :loading="sending" @click="sendMessage">Send</el-button>
+          <span class="tip">Ctrl + Enter 发送，当前会话会保存在浏览器本地</span>
+          <el-button type="primary" :loading="sending" @click="sendMessage">发送</el-button>
         </div>
       </div>
     </div>
@@ -41,21 +45,60 @@
 <script>
 import { getToken } from '@/utils/auth'
 
+const STORAGE_KEY = 'campus_ai_conversation_id'
+const STREAM_ENDPOINT = '/api/ai/chat/stream'
+const LEGACY_STREAM_ENDPOINT = '/system/ai/chat'
+
 export default {
   name: 'AiChat',
   data() {
     return {
       inputText: '',
       sending: false,
+      conversationId: '',
       messages: [
         {
           role: 'assistant',
-          content: 'Welcome. Ask any question and the server will stream back a mock LLM response.'
+          content: '你好，我已经接入流式对话、会话记忆、知识库检索和工具调用。你可以直接开始提问。'
         }
       ]
     }
   },
+  computed: {
+    shortConversationId() {
+      return this.conversationId ? this.conversationId.slice(0, 12) : 'N/A'
+    }
+  },
+  created() {
+    this.conversationId = this.loadConversationId()
+  },
   methods: {
+    loadConversationId() {
+      const cached = window.localStorage.getItem(STORAGE_KEY)
+      if (cached) {
+        return cached
+      }
+      const nextId = this.generateConversationId()
+      window.localStorage.setItem(STORAGE_KEY, nextId)
+      return nextId
+    },
+    generateConversationId() {
+      if (window.crypto && window.crypto.randomUUID) {
+        return window.crypto.randomUUID()
+      }
+      return `conv-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
+    },
+    resetConversation() {
+      this.conversationId = this.generateConversationId()
+      window.localStorage.setItem(STORAGE_KEY, this.conversationId)
+      this.messages = [
+        {
+          role: 'assistant',
+          content: '已创建新会话。后续提问将不再携带之前的上下文。'
+        }
+      ]
+      this.$message.success('已切换到新会话')
+    },
     async sendMessage() {
       const prompt = this.inputText.trim()
       if (!prompt || this.sending) {
@@ -70,18 +113,14 @@ export default {
       this.scrollToBottom()
 
       try {
-        const response = await fetch(`${process.env.VUE_APP_BASE_API}/api/ai/chat/stream`, {
-          method: 'POST',
-          headers: this.buildHeaders(),
-          body: JSON.stringify({ prompt })
-        })
+        const response = await this.requestStream(prompt)
 
         if (!response.ok) {
           throw new Error(await this.extractErrorMessage(response, `Request failed with status ${response.status}`))
         }
 
         if (!response.body) {
-          throw new Error('大模型流式响应不可用，请稍后再试')
+          throw new Error('流式响应不可用，请稍后再试')
         }
 
         const contentType = (response.headers.get('content-type') || '').toLowerCase()
@@ -89,35 +128,63 @@ export default {
           throw new Error(await this.extractErrorMessage(response, '大模型额度已耗尽，请稍后再试'))
         }
 
-        const reader = response.body.getReader()
-        const decoder = new TextDecoder('utf-8')
-        let buffer = ''
-
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) {
-            break
-          }
-
-          buffer += decoder.decode(value, { stream: true })
-          const chunks = buffer.split(/\r?\n\r?\n/)
-          buffer = chunks.pop() || ''
-
-          chunks.forEach((chunk) => {
-            this.consumeSseChunk(chunk, assistantMessage)
-          })
-        }
-
-        if (buffer) {
-          this.consumeSseChunk(buffer, assistantMessage)
-        }
+        await this.consumeStream(response, assistantMessage)
       } catch (error) {
-        const message = error.message || '大模型额度已耗尽，请稍后再试'
+        const message = error.message || '对话失败，请稍后再试'
         assistantMessage.content = message
         this.$message.error(message)
       } finally {
         this.sending = false
         this.scrollToBottom()
+      }
+    },
+    async requestStream(prompt) {
+      const payload = {
+        prompt,
+        query: prompt,
+        conversationId: this.conversationId
+      }
+
+      const primaryUrl = `${process.env.VUE_APP_BASE_API}${STREAM_ENDPOINT}?conversationId=${encodeURIComponent(this.conversationId)}`
+      const primaryResponse = await fetch(primaryUrl, {
+        method: 'POST',
+        headers: this.buildHeaders(),
+        body: JSON.stringify(payload)
+      })
+
+      if (primaryResponse.status !== 404) {
+        return primaryResponse
+      }
+
+      const legacyUrl = `${process.env.VUE_APP_BASE_API}${LEGACY_STREAM_ENDPOINT}`
+      return fetch(legacyUrl, {
+        method: 'POST',
+        headers: this.buildHeaders(),
+        body: JSON.stringify(payload)
+      })
+    },
+    async consumeStream(response, assistantMessage) {
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder('utf-8')
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) {
+          break
+        }
+
+        buffer += decoder.decode(value, { stream: true })
+        const chunks = buffer.split(/\r?\n\r?\n/)
+        buffer = chunks.pop() || ''
+
+        chunks.forEach((chunk) => {
+          this.consumeSseChunk(chunk, assistantMessage)
+        })
+      }
+
+      if (buffer) {
+        this.consumeSseChunk(buffer, assistantMessage)
       }
     },
     async extractErrorMessage(response, fallbackMessage) {
@@ -153,21 +220,28 @@ export default {
         }
       })
 
-      if (data) {
-        try {
-          const payload = JSON.parse(data)
-          if (payload.event === 'message' && payload.answer) {
-            assistantMessage.content += payload.answer
-            this.scrollToBottom()
-          } else if (payload.msg || payload.message) {
-            assistantMessage.content += payload.msg || payload.message
-            this.scrollToBottom()
-          }
-        } catch (e) {
-          assistantMessage.content += data
-          this.scrollToBottom()
-        }
+      if (!data) {
+        return
       }
+
+      try {
+        const payload = JSON.parse(data)
+        if (payload.event === 'message' && payload.answer !== undefined && payload.answer !== null) {
+          assistantMessage.content += payload.answer
+          this.scrollToBottom()
+          return
+        }
+        if (payload.msg || payload.message) {
+          assistantMessage.content += payload.msg || payload.message
+          this.scrollToBottom()
+          return
+        }
+      } catch (e) {
+        // 忽略 JSON 解析失败，走纯文本兜底
+      }
+
+      assistantMessage.content += data
+      this.scrollToBottom()
     },
     scrollToBottom() {
       this.$nextTick(() => {
@@ -196,7 +270,7 @@ export default {
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  background: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.92);
   border: 1px solid rgba(24, 144, 255, 0.12);
   border-radius: 24px;
   box-shadow: 0 20px 40px rgba(30, 60, 90, 0.08);
@@ -208,21 +282,29 @@ export default {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
+  gap: 16px;
   padding: 24px 28px 20px;
   border-bottom: 1px solid #e8f1fb;
 }
 
-.chat-header h2 {
+.header-main h2 {
   margin: 0;
   font-size: 28px;
   line-height: 1.2;
   color: #16324f;
 }
 
-.chat-header p {
+.header-main p {
   margin: 8px 0 0;
   color: #5f7590;
   font-size: 14px;
+}
+
+.header-side {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .message-list {
@@ -313,12 +395,22 @@ export default {
     padding-right: 16px;
   }
 
-  .chat-header h2 {
+  .chat-header {
+    flex-direction: column;
+  }
+
+  .header-main h2 {
     font-size: 22px;
   }
 
   .bubble {
     max-width: 86%;
+  }
+
+  .composer-actions {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
   }
 }
 </style>

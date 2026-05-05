@@ -4,6 +4,8 @@ import java.util.List;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.beans.factory.annotation.Autowired;
+import com.ruoyi.system.Oss.AliOssService;
+import com.ruoyi.system.service.RagService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -20,6 +22,8 @@ import com.ruoyi.system.domain.KnowledgeDoc;
 import com.ruoyi.system.service.IKnowledgeDocService;
 import com.ruoyi.common.utils.poi.ExcelUtil;
 import com.ruoyi.common.core.page.TableDataInfo;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.multipart.MultipartFile;
 
 /**
  * 校园知识库文档Controller
@@ -33,6 +37,12 @@ public class KnowledgeDocController extends BaseController
 {
     @Autowired
     private IKnowledgeDocService knowledgeDocService;
+
+    @Autowired
+    private AliOssService aliOssService;
+
+    @Autowired
+    private RagService ragService;
 
     /**
      * 查询校园知识库文档列表
@@ -100,5 +110,54 @@ public class KnowledgeDocController extends BaseController
     public AjaxResult remove(@PathVariable Long[] docIds)
     {
         return toAjax(knowledgeDocService.deleteKnowledgeDocByDocIds(docIds));
+    }
+
+    /**
+     * 上传知识文档到 OSS 并自动向量化入库
+     */
+    @PreAuthorize("@ss.hasPermi('system:knowledge:add')")
+    @Log(title = "上传知识文档并向量化", businessType = BusinessType.INSERT)
+    @PostMapping("/import-file")
+    public AjaxResult importFile(@RequestParam("file") MultipartFile file,
+        @RequestParam(value = "docName", required = false) String docName,
+        @RequestParam(value = "remark", required = false) String remark)
+    {
+        if (file == null || file.isEmpty())
+        {
+            return AjaxResult.error("上传文件不能为空");
+        }
+
+        KnowledgeDoc knowledgeDoc = new KnowledgeDoc();
+        knowledgeDoc.setDocName((docName == null || docName.isBlank()) ? file.getOriginalFilename() : docName);
+        knowledgeDoc.setRemark(remark);
+        knowledgeDoc.setStatus("1");
+
+        try
+        {
+            String fileUrl = aliOssService.upload(file);
+            knowledgeDoc.setFileUrl(fileUrl);
+            knowledgeDocService.insertKnowledgeDoc(knowledgeDoc);
+
+            ragService.importOssFileToVectorStore(fileUrl);
+
+            knowledgeDoc.setStatus("2");
+            knowledgeDocService.updateKnowledgeDoc(knowledgeDoc);
+
+            AjaxResult ajaxResult = AjaxResult.success("上传并向量化成功");
+            ajaxResult.put("docId", knowledgeDoc.getDocId());
+            ajaxResult.put("url", fileUrl);
+            ajaxResult.put("originalFilename", file.getOriginalFilename());
+            ajaxResult.put("vectorized", true);
+            return ajaxResult;
+        }
+        catch (Exception e)
+        {
+            knowledgeDoc.setStatus("0");
+            if (knowledgeDoc.getDocId() != null)
+            {
+                knowledgeDocService.updateKnowledgeDoc(knowledgeDoc);
+            }
+            return AjaxResult.error("上传并向量化失败: " + e.getMessage());
+        }
     }
 }

@@ -42,3 +42,15 @@ export function delKnowledge(docId) {
     method: 'delete'
   })
 }
+
+// 上传知识文档并自动向量化
+export function importKnowledgeFile(data) {
+  return request({
+    url: '/system/knowledge/import-file',
+    method: 'post',
+    data,
+    headers: {
+      'Content-Type': 'multipart/form-data'
+    }
+  })
+}

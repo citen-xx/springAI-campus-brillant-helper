@@ -687,3 +687,40 @@ create table gen_table_column (
   update_time       datetime                                   comment '更新时间',
   primary key (column_id)
 ) engine=innodb auto_increment=1 comment = '代码生成业务表字段';
+
+-- ----------------------------
+-- 21、学生成绩表
+-- ----------------------------
+drop table if exists student_score;
+create table student_score (
+  id              bigint(20)      not null auto_increment comment '主键ID',
+  student_id      varchar(32)     not null                comment '学号',
+  subject         varchar(100)    not null                comment '课程名称',
+  score           int(11)         not null                comment '成绩',
+  create_time     datetime                               comment '创建时间',
+  update_time     datetime                               comment '更新时间',
+  primary key (id),
+  unique key uk_student_subject (student_id, subject)
+) engine=innodb auto_increment=1 comment = '学生成绩表';
+
+insert into student_score values (1, '202301010001', '高等数学', 95, sysdate(), sysdate());
+insert into student_score values (2, '202301010001', '大学英语', 88, sysdate(), sysdate());
+insert into student_score values (3, '202301010001', 'Java程序设计', 92, sysdate(), sysdate());
+insert into student_score values (4, '202301010002', '高等数学', 91, sysdate(), sysdate());
+insert into student_score values (5, '202301010002', '大学英语', 84, sysdate(), sysdate());
+
+-- ----------------------------
+-- 22、校园一卡通账户表
+-- ----------------------------
+drop table if exists campus_card_account;
+create table campus_card_account (
+  id              bigint(20)      not null auto_increment comment '主键ID',
+  student_id      varchar(32)     not null                comment '学号',
+  balance         decimal(10,2)   not null default 0.00   comment '一卡通余额',
+  update_time     datetime                               comment '更新时间',
+  primary key (id),
+  unique key uk_card_student (student_id)
+) engine=innodb auto_increment=1 comment = '校园一卡通账户表';
+
+insert into campus_card_account values (1, '202301010001', 128.50, sysdate());
+insert into campus_card_account values (2, '202301010002', 86.30, sysdate());

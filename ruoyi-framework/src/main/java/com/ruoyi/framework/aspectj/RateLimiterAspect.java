@@ -3,6 +3,8 @@ package com.ruoyi.framework.aspectj;
 import java.lang.reflect.Method;
 import java.util.Collections;
 import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import org.aspectj.lang.JoinPoint;
 import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.annotation.Before;
@@ -21,9 +23,7 @@ import com.ruoyi.common.utils.StringUtils;
 import com.ruoyi.common.utils.ip.IpUtils;
 
 /**
- * 限流处理
- *
- * @author ruoyi
+ * 限流切面
  */
 @Aspect
 @Component
@@ -48,27 +48,37 @@ public class RateLimiterAspect
     }
 
     @Before("@annotation(rateLimiter)")
-    public void doBefore(JoinPoint point, RateLimiter rateLimiter) throws Throwable
+    public void doBefore(JoinPoint point, RateLimiter rateLimiter)
     {
-        int time = rateLimiter.time();
         int count = rateLimiter.count();
+        long windowSizeMs = TimeUnit.SECONDS.toMillis(rateLimiter.time());
+        long currentTimeMs = System.currentTimeMillis();
+        String requestId = UUID.randomUUID().toString();
 
         String combineKey = getCombineKey(rateLimiter, point);
         List<Object> keys = Collections.singletonList(combineKey);
         try
         {
-            // 这里通过 Redis + Lua 脚本一次性完成“读取当前计数、计数自增、首次访问设置过期时间”三步操作，
-            // 避免高并发场景下多次 Redis 往返带来的竞态问题，保证整个限流判断具备原子性。
-            // 当前项目这段脚本实现的是“固定窗口计数限流”：
-            // 在一个 time 秒的窗口内，某个 key 最多允许访问 count 次。
-            // 它不是严格意义上的“滑动窗口”或“令牌桶”，但滑动窗口/令牌桶在生产中也经常借助
-            // Redis + Lua 来保证原子更新，所以复习时可以把这类实现都归到“Redis 原子限流”这一类理解。
-            Long number = redisTemplate.execute(limitScript, keys, count, time);
-            if (StringUtils.isNull(number) || number.intValue() > count)
+            // 使用 Redis ZSET + Lua 实现滑动窗口限流：
+            // 1) 按时间戳清理窗口外的请求
+            // 2) 统计当前窗口内请求数
+            // 3) 未超限则插入当前请求
+            // 4) 整个过程在 Redis 中原子执行，避免高并发竞态
+            Long allowed = redisTemplate.execute(
+                limitScript,
+                keys,
+                String.valueOf(currentTimeMs),
+                String.valueOf(windowSizeMs),
+                requestId,
+                String.valueOf(count)
+            );
+
+            if (StringUtils.isNull(allowed) || allowed == 0L)
             {
                 throw new ServiceException(rateLimiter.message());
             }
-            log.info("限制请求'{}',当前请求'{}',缓存key'{}'", count, number.intValue(), combineKey);
+
+            log.info("Rate limit ok, key={}, windowMs={}, currentTimeMs={}, requestId={}", combineKey, windowSizeMs, currentTimeMs, requestId);
         }
         catch (ServiceException e)
         {
@@ -76,7 +86,7 @@ public class RateLimiterAspect
         }
         catch (Exception e)
         {
-            throw new RuntimeException("服务器限流异常，请稍后再试");
+            throw new RuntimeException("服务器限流异常，请稍后再试", e);
         }
     }
 
@@ -110,7 +120,6 @@ public class RateLimiterAspect
         }
         catch (Exception ignored)
         {
-            // Ignore and fallback to IP below.
         }
         return "ip:" + IpUtils.getIpAddr();
     }
