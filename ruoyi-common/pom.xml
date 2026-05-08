@@ -78,6 +78,11 @@
             <artifactId>poi-ooxml</artifactId>
         </dependency>
 
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-compress</artifactId>
+        </dependency>
+
         <!-- Token生成与解析-->
         <dependency>
             <groupId>io.jsonwebtoken</groupId>

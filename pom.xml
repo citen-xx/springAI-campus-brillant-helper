@@ -26,6 +26,7 @@
         <fastjson.version>2.0.61</fastjson.version>
         <oshi.version>6.10.0</oshi.version>
         <commons.io.version>2.21.0</commons.io.version>
+        <commons.compress.version>1.27.1</commons.compress.version>
         <poi.version>4.1.2</poi.version>
         <velocity.version>2.3</velocity.version>
         <jwt.version>0.9.1</jwt.version>
@@ -116,6 +117,12 @@
                 <groupId>commons-io</groupId>
                 <artifactId>commons-io</artifactId>
                 <version>${commons.io.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-compress</artifactId>
+                <version>${commons.compress.version}</version>
             </dependency>
 
             <dependency>

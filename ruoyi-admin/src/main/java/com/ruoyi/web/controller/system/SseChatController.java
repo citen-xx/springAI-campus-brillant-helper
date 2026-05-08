@@ -42,6 +42,7 @@ import com.ruoyi.system.service.RagService;
 
 @RestController
 @RequestMapping("/api/ai/chat")
+@Anonymous
 public class SseChatController
 {
     private static final Logger log = LoggerFactory.getLogger(SseChatController.class);
@@ -107,7 +108,7 @@ public class SseChatController
      * - QuestionAnswerAdvisor RAG 检索
      * - SSE 推送给前端
      */
-    @RateLimiter(time = 60, count = 3, limitType = LimitType.USER_ID, message = "大模型额度已耗尽，请稍后再试")
+    @RateLimiter(time = 60, count = 9999999, limitType = LimitType.USER_ID, message = "大模型额度已耗尽，请稍后再试")
     @RequestMapping(value = "/stream", method = { RequestMethod.GET, RequestMethod.POST }, produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter streamChat(@RequestBody(required = false) Map<String, Object> body,
         @RequestParam(value = "prompt", required = false) String prompt,
@@ -136,24 +137,24 @@ public class SseChatController
             return emitter;
         }
 
-        // 2. Redis + Lua 滑动窗口限流（1 分钟 10 次）
-        String rateLimitKey = "ai:rate_limit:" + conversationId;
-        long windowSizeMs = TimeUnit.SECONDS.toMillis(60);
-        long maxRequests = 10L;
-        long currentTimeMs = System.currentTimeMillis();
-        Long isAllowed = stringRedisTemplate.execute(
-            limitScript,
-            Collections.singletonList(rateLimitKey),
-            String.valueOf(windowSizeMs),
-            String.valueOf(maxRequests),
-            String.valueOf(currentTimeMs)
-        );
-        if (isAllowed == null || isAllowed == 0L)
-        {
-            sendAsync(emitter, toSse("请求过于频繁，请稍后再试"));
-            emitter.complete();
-            return emitter;
-        }
+        // 2. Redis + Lua 滑动窗口限流（暂时禁用，使用极大的请求数限制）
+        // String rateLimitKey = "ai:rate_limit:" + conversationId;
+        // long windowSizeMs = TimeUnit.SECONDS.toMillis(60);
+        // long maxRequests = 9999999L;
+        // long currentTimeMs = System.currentTimeMillis();
+        // Long isAllowed = stringRedisTemplate.execute(
+        //     limitScript,
+        //     Collections.singletonList(rateLimitKey),
+        //     String.valueOf(windowSizeMs),
+        //     String.valueOf(maxRequests),
+        //     String.valueOf(currentTimeMs)
+        // );
+        // if (isAllowed == null || isAllowed == 0L)
+        // {
+        //     sendAsync(emitter, toSse("请求过于频繁，请稍后再试"));
+        //     emitter.complete();
+        //     return emitter;
+        // }
 
         // 3. 先执行向量检索，再把检索结果组装成系统提示词做 RAG
         List<Document> retrievedDocuments = ragService.retrieveRelevantDocuments(userPrompt);
