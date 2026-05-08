@@ -57,16 +57,16 @@ spring:
           model: qwen-plus
     vectorstore:
       redis:
-        uri: redis://192.168.88.147:6379
-        index-name: campus_knowledge
-        prefix: campus_knowledge:
+        uri: redis://192.168.88.148:6379
+        index: campus_knowledge
+        prefix: campus_knowledge
         initialize-schema: true
 
   data:
     redis:
-      host: 192.168.88.147
+      host: localhost
       port: 6379
-      database: 3
+      database: 7
       password: 123456
       timeout: 10s
       lettuce:

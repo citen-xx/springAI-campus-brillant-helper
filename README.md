@@ -1,9 +1,9 @@
 # Campus AI Assistant Admin
 
-> 基于 **RuoYi + Spring AI + 通义千问 + Redis Vector Store + OSS + SSE** 打造的校园智能问答与知识库管理平台
+> 基于 **RuoYi + Spring AI + 通义千问 + Redis Vector Store + OSS + SSE** 构建的校园智能问答与知识库管理平台
 
 ![Java](https://img.shields.io/badge/Java-17-blue)
-![Spring Boot](https://img.shields.io/badge/Spring%20Boot-4.0.3-brightgreen)
+![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.3.3-brightgreen)
 ![Spring AI](https://img.shields.io/badge/Spring%20AI-1.0.0--M6-orange)
 ![Vue](https://img.shields.io/badge/Vue-2.6.12-42b883)
 ![Redis](https://img.shields.io/badge/Redis-VectorStore-red)
@@ -13,164 +13,100 @@
 
 ## 项目简介
 
-这是一个基于若依后台框架二次开发的 **校园 AI 问答平台**。  
-项目目标不是做一个单纯的聊天 Demo，而是把：
+这是一个在若依后台框架基础上二次开发的 **校园 AI 问答平台**。  
+它不是单纯的大模型聊天 Demo，而是一套完整的后台系统，覆盖了：
 
-- 后台权限与用户管理
+- 后台权限管理
 - 标准问答库运营
-- OSS 文档上传
-- 文档解析与向量化入库
+- 知识文档管理
+- OSS 文件上传
+- 文档自动向量化入库
 - RAG 检索增强
 - Function Calling 工具调用
 - SSE 流式对话
-- 会话记忆与限流保护
-
-整合成一个可维护、可扩展、可继续落地的校园智能助手后台系统。
+- 会话记忆
+- Redis 限流保护
 
 一句话概括：
 
-> 这是一个把 **后台管理、知识库运营、流式对话、向量检索、工具调用、缓存治理、权限控制** 融合在一起的 AI 应用型项目。
+> 这是一个把 **后台管理、知识库运营、向量检索、流式对话、工具调用、缓存治理、权限控制** 融合在一起的 AI 应用型项目。
 
 ---
 
-## 当前版本的核心变化
+## 当前版本已经完成的核心能力
 
-相较于早期版本，这个项目已经完成以下底层升级：
+### 1. 底层 AI 能力迁移到 Spring AI
 
-- 将底层 AI 引擎从 **Dify 直连模式** 迁移到 **Spring AI**
-- 使用 **阿里云通义千问** 的 OpenAI Compatible Endpoint
-- 使用 **Redis Vector Store** 存储知识片段向量
-- 增加 **OSS -> 文档解析 -> 切片 -> 向量化入库** 的闭环
-- 在流式对话中加入：
-  - **RAG 检索增强**
-  - **Function Calling**
-  - **会话级 ChatMemory**
-  - **Redis + Lua 限流**
+项目已从早期的 Dify 直连对话模式迁移到：
 
----
-
-## 为什么这个项目有价值
-
-校园问答有几个典型特点：
-
-- 高频问题多：奖学金、成绩、选课、请假、毕业流程、校园卡余额
-- 文档内容多：规章制度、办事说明、通知公告、政策文件
-- 答案需要稳定：不能完全依赖大模型自由发挥
-- 成本需要控制：不能所有问题都无脑打大模型
-- 场景需要追溯：需要知道回答依据、文件来源和上下文
-
-所以本项目的设计思路不是“把所有问题都扔给模型”，而是做了一层业务编排：
-
-1. 标准、高频、确定性问题优先走问答库
-2. 制度和长文档类问题走向量检索增强
-3. 成绩、余额等实时数据走 Function Calling 工具查询
-4. 模型负责理解问题、融合知识、生成最终回答
-
-这个思路更贴近真实业务系统，也更适合作为后端 / 全栈 / AI 应用开发项目展示。
-
----
-
-## 核心亮点
-
-### 1. 基于若依做 AI 二开，而不是重新造后台
-
-项目复用了若依成熟的：
-
-- 用户管理
-- 角色权限
-- 菜单权限
-- 登录认证
-- 日志审计
-- 参数配置
-- 系统监控
+- **Spring AI 1.0.0-M6**
+- **阿里云通义千问 OpenAI Compatible Endpoint**
 
 这样做的好处是：
 
-- 后台基础设施稳定
-- 可以快速接入业务能力
-- 更接近企业项目真实开发方式
+- 模型调用统一抽象
+- 更容易接入 Memory、RAG、Tool Calling
+- 更方便后续替换模型供应商
 
-### 2. Spring AI 驱动的通义千问接入
+### 2. RAG 知识库闭环
 
-项目不再直接依赖 Dify 对话能力，而是改为：
+当前已经具备完整的 RAG 入库与检索链路：
 
-- Spring AI 统一抽象
-- OpenAI Compatible API 对接阿里云通义千问
-- 后续可继续平滑替换模型供应商
-
-优点：
-
-- 模型调用方式统一
-- 更容易做 RAG、Tools、Memory 组合
-- 更方便代码级控制和二次开发
-
-### 3. RAG 知识库闭环
-
-现在已经具备完整的知识入库链路：
-
-1. 前端上传文档
-2. 后端上传到阿里云 OSS
-3. 从 OSS 读取流
-4. 使用 `TikaDocumentReader` 解析文本
-5. 使用 `TokenTextSplitter` 切片
+1. 上传文件到阿里云 OSS
+2. 从 OSS 读取文件流
+3. 使用 `TikaDocumentReader` 解析 PDF / Word / TXT / HTML
+4. 使用 `TokenTextSplitter` 做文本切片
+5. 对切片做 overlap 处理
 6. 写入 Redis Vector Store
-7. 对话时执行 `similaritySearch`
-8. 将检索结果拼接成 `System Prompt`
+7. 聊天时执行 `similaritySearch`
+8. 将检索结果拼成 `System Prompt`
 9. 再交给模型生成答案
 
-### 4. SSE 流式对话 + 会话记忆
+### 3. Function Calling 工具调用
 
-流式聊天接口支持：
-
-- `SseEmitter` 推流
-- 前端 `fetch + ReadableStream` 打字机效果
-- `conversationId` 多轮对话
-- Redis 持久化 `ChatMemory`
-- 服务重启后仍可恢复历史上下文
-
-### 5. Function Calling 工具调用
-
-项目已经支持为模型暴露工具函数：
+当前已经接入两类工具函数：
 
 - `getStudentScore`
 - `getCardBalance`
 
-当前功能已接入真实数据库查询，不再是纯模拟数据。
+而且已经从“模拟逻辑”升级为**真实数据库查询**，不再只是写死返回值。
 
-### 6. 限流与稳定性治理
+### 4. SSE 流式对话
 
-针对 AI 对话接口，项目增加了：
+项目支持基于 `SseEmitter` 的流式聊天接口：
+
+- 后端持续推送
+- 前端使用 `fetch + ReadableStream` 逐块解析
+- 打字机效果输出
+- 兼容 JSON 格式的 SSE 数据包
+
+### 5. 会话记忆
+
+项目已实现基于 Redis 的 `ChatMemory`：
+
+- conversationId 作为会话主键
+- 浏览器自动保存 conversationId
+- 后端从 Redis 恢复会话上下文
+- 支持断线重连和多轮续聊
+
+### 6. 限流保护
+
+针对 AI 对话接口，项目已实现：
 
 - Redis + Lua 滑动窗口限流
-- 会话级并发保护
-- SSE 超时处理
-- 错误兜底响应
+- 注解式 `@RateLimiter`
+- 支持用户维度优先、IP 兜底
+- 防止大模型接口被恶意刷单
 
 ---
 
-## 功能地图
+## 适用场景
 
-### 通用后台能力
-
-- 登录与认证
-- 用户、角色、菜单、部门、岗位
-- 配置管理
-- 日志管理
-- Swagger 接口文档
-- Redis 监控
-- 服务监控
-
-### 自定义 AI 业务能力
-
-- AI 标准问答库管理
-- 校园知识文档管理
-- OSS 文档上传
-- 自动向量化入库
-- Redis 向量检索
-- 通义千问流式对话
-- 会话记忆
-- 工具调用（成绩 / 一卡通）
-- SSE 聊天页面
+- 校园智能问答后台
+- 教务 / 学生服务 AI 助手
+- 知识文档问答系统
+- 基于若依的 AI 应用集成示例
+- Java 后端 / 全栈 / AI 应用开发项目展示
 
 ---
 
@@ -178,7 +114,7 @@
 
 ### 后端
 
-- Spring Boot 4.0.3
+- Spring Boot 3.3.3
 - Spring Security
 - JWT
 - MyBatis
@@ -187,14 +123,13 @@
 - Redis
 - Redisson
 - Spring AI 1.0.0-M6
-- 通义千问 OpenAI Compatible API
+- ChatClient
+- ChatMemory
 - Redis Vector Store
 - TikaDocumentReader
 - TokenTextSplitter
-- ChatClient
-- ChatMemory
 - SseEmitter
-- `@Async` + `ThreadPoolTaskExecutor`
+- `@Async + ThreadPoolTaskExecutor`
 - Swagger / springdoc
 - 阿里云 OSS SDK
 
@@ -212,7 +147,25 @@
 - MySQL
 - Redis
 - 阿里云 OSS
-- 阿里云 DashScope / 通义千问
+- 阿里云通义千问（DashScope Compatible Endpoint）
+
+---
+
+## 系统架构
+
+```mermaid
+flowchart LR
+    A[Vue2 Admin UI] --> B[Axios / fetch]
+    B --> C[ruoyi-admin Controllers]
+    C --> D[ruoyi-system Services]
+    D --> E[(MySQL)]
+    D --> F[(Redis)]
+    D --> G[Aliyun OSS]
+    D --> H[Spring AI / Qwen]
+    D --> I[Redis Vector Store]
+    C --> J[Spring Security / JWT]
+    C --> K[SSE Stream]
+```
 
 ---
 
@@ -253,9 +206,9 @@ RuoYi-Vue
 
 ---
 
-## 关键业务模块
+## 核心业务模块
 
-## 1. AI 热点问答库
+## 1. AI 标准问答库
 
 字段包括：
 
@@ -270,10 +223,17 @@ RuoYi-Vue
 
 用途：
 
-- 存储高频标准问答
+- 沉淀高频标准问答
 - 降低模型调用成本
 - 提高响应速度
 - 增强答案可控性
+
+缓存策略：
+
+- Redis 缓存
+- 空值缓存防穿透
+- Redisson 分布式锁防击穿
+- 数据更新后主动清缓存
 
 对应代码：
 
@@ -290,22 +250,22 @@ RuoYi-Vue
 - `status`
 - `remark`
 
-当前支持：
+支持：
 
-- 新增 / 修改 / 删除 / 导出
-- 上传文件到 OSS
+- 知识文档 CRUD
+- OSS 上传
 - 自动向量化入库
-- 同步状态标记
+- 向量化状态跟踪
 
-接口：
+关键接口：
 
-- `/system/knowledge/import-file`
+- `POST /system/knowledge/import-file`
 
 对应代码：
 
 - `ruoyi-admin/src/main/java/com/ruoyi/web/controller/system/KnowledgeDocController.java`
-- `ruoyi-system/src/main/java/com/ruoyi/system/service/RagService.java`
 - `ruoyi-system/src/main/java/com/ruoyi/system/Oss/AliOssService.java`
+- `ruoyi-system/src/main/java/com/ruoyi/system/service/RagService.java`
 
 ## 3. 学生管理
 
@@ -316,14 +276,15 @@ RuoYi-Vue
 - `studentName`
 - `majorCode`
 
-这部分既是后台基础业务数据，也为 AI 工具调用与个性化回答提供上下文。
+该模块既是后台业务数据，又为 AI 工具调用与个性化问答提供上下文。
 
 ## 4. 成绩与一卡通查询
 
-已从模拟逻辑升级为真实数据库查询。
+当前已经接入真实数据库查询，不再是纯 mock。
 
-当前数据库表：
+涉及表：
 
+- `student`
 - `student_score`
 - `campus_card_account`
 
@@ -332,21 +293,19 @@ RuoYi-Vue
 - `IEduQueryService`
 - `EduQueryServiceImpl`
 
-这套服务同时给：
+统一复用位置：
 
 - `EduApiController`
 - `EduAiFunctionConfig`
 
-复用，保证接口与 Function Calling 数据来源一致。
-
 ## 5. AI 对话
 
-当前存在两类 AI 接口：
+当前存在两类 AI 对话能力：
 
 ### `/system/ai/chat`
 
-- 基于 Spring AI 的流式问答接口
-- 保留 Redis 缓存和 Lua 限流
+- 基于 Spring AI 的流式对话接口
+- 保留 Redis 缓存与 Lua 限流
 - 通过 `QuestionAnswerAdvisor` 做 RAG
 
 ### `/api/ai/chat/stream`
@@ -373,21 +332,21 @@ RuoYi-Vue
 
 ### 文档入库流程
 
-1. 前端选择知识文件
-2. 后端上传阿里云 OSS
+1. 前端上传知识文档
+2. 后端上传到阿里云 OSS
 3. 根据 OSS URL 读取文件流
-4. `TikaDocumentReader` 解析文本
-5. `TokenTextSplitter` 切片
-6. 手动追加 overlap，增强跨段语义连续性
+4. 使用 `TikaDocumentReader` 解析文本
+5. 使用 `TokenTextSplitter` 做基础切片
+6. 对切片追加 overlap
 7. 写入 Redis Vector Store
 
 ### 问答检索流程
 
 1. 用户提问
-2. `VectorStore.similaritySearch(query)` 召回 Top-K 相关片段
-3. 生成系统提示词 `System Prompt`
-4. `ChatClient` 结合 Prompt、Memory、Functions 一起生成答案
-5. 通过 SSE 流式返回给前端
+2. `VectorStore.similaritySearch(query)` 检索 Top-K 片段
+3. 把召回片段拼装成 `System Prompt`
+4. `ChatClient` 结合 Prompt、Memory、Functions 生成答案
+5. 通过 SSE 流式返回前端
 
 ---
 
@@ -412,47 +371,46 @@ chatClient.prompt(userPrompt)
     .chatResponse();
 ```
 
-统一数据来源：
+特点：
 
-- `EduApiController`
-- Spring AI Function Bean
-
-都走 `IEduQueryService`，避免一边查库、一边 mock 的问题。
+- Function Bean 已接真实查库
+- 和开放 API 走同一套服务逻辑
+- 避免“一边 mock、一边真实”的分裂数据源
 
 ---
 
 ## 会话记忆设计
 
-当前实现了基于 Redis 的 `ChatMemory`：
+项目实现了 Redis 持久化 `ChatMemory`：
 
-- conversationId 作为会话主键
-- 会话历史持久化到 Redis List
-- 浏览器端自动生成并保存 `conversationId`
-- 断线重连或刷新页面后可继续上下文
+- `conversationId` 作为会话唯一标识
+- 消息历史写入 Redis List
+- 浏览器端自动持久化 `conversationId`
+- 支持断线重连和多轮续聊
 
 前端行为：
 
-- 首次进入页面自动生成 `conversationId`
+- 首次进入自动生成 `conversationId`
 - 存入 `localStorage`
-- 每次请求自动带上
-- 支持“新会话”按钮主动切换上下文
+- 每次请求自动携带
+- 点击“新会话”可手动切换上下文
 
 ---
 
 ## 限流机制
 
-项目已从简单固定窗口升级为：
+项目已从固定窗口升级为：
 
 - **Redis ZSET 滑动窗口限流**
 
-核心思路：
+核心逻辑：
 
 1. `ZREMRANGEBYSCORE` 清理窗口外旧请求
 2. `ZCARD` 统计当前窗口请求数
-3. `ZADD` 写入新请求
-4. `PEXPIRE` 设置 key 生命周期
+3. `ZADD` 添加新请求
+4. `PEXPIRE` 设置过期时间
 
-优势：
+优点：
 
 - 高并发下原子执行
 - 精度优于固定窗口
@@ -491,14 +449,14 @@ chatClient.prompt(userPrompt)
 - Spring Security + JWT 无状态认证
 - Redis 登录态管理
 - Redis + Lua 限流
-- Redis Vector Store
 - OSS 文件上传
 - 文档自动向量化
-- SSE 流式输出
-- 多轮会话记忆
-- Function Calling
+- Redis Vector Store
 - RAG 检索增强
-- 后台文档管理与导入
+- Function Calling
+- SSE 流式输出
+- Redis 持久化会话记忆
+- 后台知识文档管理与导入
 
 ---
 
@@ -546,12 +504,12 @@ npm run dev
 ## 后续可扩展方向
 
 - 批量上传多个知识文档并并行向量化
-- 把 Redis ChatMemory 升级成更完整的历史压缩与摘要记忆
-- 增加知识文档来源分类、权限隔离、标签过滤
-- 支持多租户知识库索引
-- 引入 embedding 模型独立配置
-- 增加知识检索命中可视化
-- 增加导入进度、失败重试和后台任务中心
+- 更完善的历史压缩 / 摘要记忆
+- 知识文档标签过滤、来源分类、权限隔离
+- 多租户知识库索引
+- 独立 embedding 模型配置
+- 检索命中可视化
+- 导入进度、失败重试和后台任务中心
 
 ---
 
@@ -563,9 +521,9 @@ npm run dev
 
 ## 仓库说明
 
-这个仓库首页 README 已经不再是若依默认模板说明，而是当前项目本身的完整介绍。  
-如果你是面试官、招聘方或协作者，希望你通过这个 README 能快速看清楚：
+这个 README 已经不再是若依默认模板说明，而是当前项目本身的完整介绍。  
+如果你是面试官、招聘方或协作者，希望你通过这个仓库首页就能快速看明白：
 
-- 它是一个真实的 AI 应用型后台项目
+- 这是一个真实的 AI 应用型后台项目
 - 它具备完整的知识入库与检索增强链路
 - 它不是纯聊天 Demo，而是后台、知识库、工具调用、会话记忆、流式输出的整合实践

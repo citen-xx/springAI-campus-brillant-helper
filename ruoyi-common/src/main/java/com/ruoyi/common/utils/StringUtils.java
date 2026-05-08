@@ -6,7 +6,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import org.apache.commons.lang3.Strings;
 import org.springframework.util.AntPathMatcher;
 import com.ruoyi.common.constant.Constants;
 import com.ruoyi.common.core.text.StrFormatter;
@@ -443,7 +442,7 @@ public class StringUtils extends org.apache.commons.lang3.StringUtils
      */
     public static boolean contains(final CharSequence seq, final CharSequence searchSeq)
     {
-        return Strings.CS.contains(seq, searchSeq);
+        return contains(seq, searchSeq);
     }
 
     /**
@@ -481,7 +480,7 @@ public class StringUtils extends org.apache.commons.lang3.StringUtils
      */
     public static boolean containsAny(final CharSequence cs, final CharSequence... searchCharSequences)
     {
-        return Strings.CS.containsAny(cs, searchCharSequences);
+        return containsAny(cs, searchCharSequences);
     }
 
     /**
@@ -516,7 +515,7 @@ public class StringUtils extends org.apache.commons.lang3.StringUtils
      */
     public static boolean containsIgnoreCase(final CharSequence str, final CharSequence searchStr)
     {
-        return Strings.CI.contains(str, searchStr);
+        return org.apache.commons.lang3.StringUtils.containsIgnoreCase(str, searchStr);
     }
 
     /**
@@ -528,19 +527,22 @@ public class StringUtils extends org.apache.commons.lang3.StringUtils
      */
     public static boolean startsWithAny(final CharSequence sequence, final CharSequence... searchStrings)
     {
-        return Strings.CS.startsWithAny(sequence, searchStrings);
+        return org.apache.commons.lang3.StringUtils.startsWithAny(sequence == null ? null : sequence.toString(),
+            searchStrings == null ? null : toStringArray(searchStrings));
     }
 
     /**
      * 不区分大小写地检查一个字符串是否以指定前缀开头。
      *
      * @param str 待检查的字符串
-     * @param 要查找的前缀
+     * @param prefix 要查找的前缀
      * @return 结果
      */
     public static boolean startsWithIgnoreCase(final CharSequence str, final CharSequence prefix)
     {
-        return Strings.CI.startsWith(str, prefix);
+        return org.apache.commons.lang3.StringUtils.startsWithIgnoreCase(
+            str == null ? null : str.toString(),
+            prefix == null ? null : prefix.toString());
     }
 
     /**
@@ -552,7 +554,9 @@ public class StringUtils extends org.apache.commons.lang3.StringUtils
      */
     public static boolean equals(final CharSequence cs1, final CharSequence cs2)
     {
-        return Strings.CS.equals(cs1, cs2);
+        return org.apache.commons.lang3.StringUtils.equals(
+            cs1 == null ? null : cs1.toString(),
+            cs2 == null ? null : cs2.toString());
     }
 
     /**
@@ -565,7 +569,7 @@ public class StringUtils extends org.apache.commons.lang3.StringUtils
      */
     public static String replace(final String text, final String searchString, final String replacement)
     {
-        return Strings.CS.replace(text, searchString, replacement);
+        return org.apache.commons.lang3.StringUtils.replace(text, searchString, replacement);
     }
 
     /**
@@ -576,7 +580,7 @@ public class StringUtils extends org.apache.commons.lang3.StringUtils
      */
     public static String removeEnd(final String str, final String remove)
     {
-        return Strings.CS.removeEnd(str, remove);
+        return org.apache.commons.lang3.StringUtils.removeEnd(str, remove);
     }
 
     /**
@@ -588,7 +592,9 @@ public class StringUtils extends org.apache.commons.lang3.StringUtils
      */
     public static int indexOf(final CharSequence seq, final CharSequence searchSeq)
     {
-        return Strings.CS.indexOf(seq, searchSeq);
+        return org.apache.commons.lang3.StringUtils.indexOf(
+            seq == null ? null : seq.toString(),
+            searchSeq == null ? null : searchSeq.toString());
     }
 
     /**
@@ -600,7 +606,9 @@ public class StringUtils extends org.apache.commons.lang3.StringUtils
      */
     public static boolean endsWith(final CharSequence str, final CharSequence suffix)
     {
-        return Strings.CS.endsWith(str, suffix);
+        return org.apache.commons.lang3.StringUtils.endsWith(
+            str == null ? null : str.toString(),
+            suffix == null ? null : suffix.toString());
     }
 
     /**
@@ -612,7 +620,9 @@ public class StringUtils extends org.apache.commons.lang3.StringUtils
      */
     public static boolean equalsAny(final CharSequence string, final CharSequence... searchStrings)
     {
-        return Strings.CS.equalsAny(string, searchStrings);
+        return org.apache.commons.lang3.StringUtils.equalsAny(
+            string == null ? null : string.toString(),
+            searchStrings == null ? null : toStringArray(searchStrings));
     }
 
     /**
@@ -624,7 +634,9 @@ public class StringUtils extends org.apache.commons.lang3.StringUtils
      */
     public static boolean endsWithAny(final CharSequence sequence, final CharSequence... searchStrings)
     {
-        return Strings.CS.endsWithAny(sequence, searchStrings);
+        return org.apache.commons.lang3.StringUtils.endsWithAny(
+            sequence == null ? null : sequence.toString(),
+            searchStrings == null ? null : toStringArray(searchStrings));
     }
 
     /**
@@ -636,7 +648,9 @@ public class StringUtils extends org.apache.commons.lang3.StringUtils
      */
     public static boolean endsWithIgnoreCase(final CharSequence str, final CharSequence suffix)
     {
-        return Strings.CI.endsWith(str, suffix);
+        return org.apache.commons.lang3.StringUtils.endsWithIgnoreCase(
+            str == null ? null : str.toString(),
+            suffix == null ? null : suffix.toString());
     }
 
     /**
@@ -648,7 +662,9 @@ public class StringUtils extends org.apache.commons.lang3.StringUtils
      */
     public static int indexOfIgnoreCase(final CharSequence str, final CharSequence searchStr)
     {
-        return Strings.CI.indexOf(str, searchStr);
+        return org.apache.commons.lang3.StringUtils.indexOfIgnoreCase(
+            str == null ? null : str.toString(),
+            searchStr == null ? null : searchStr.toString());
     }
 
     /**
@@ -661,7 +677,23 @@ public class StringUtils extends org.apache.commons.lang3.StringUtils
      */
     public static boolean equalsAnyIgnoreCase(final CharSequence string, final CharSequence... searchStrings)
     {
-        return Strings.CI.equalsAny(string, searchStrings);
+        return org.apache.commons.lang3.StringUtils.equalsAnyIgnoreCase(
+            string == null ? null : string.toString(),
+            searchStrings == null ? null : toStringArray(searchStrings));
+    }
+
+    private static String[] toStringArray(final CharSequence... searchStrings)
+    {
+        if (searchStrings == null)
+        {
+            return null;
+        }
+        String[] result = new String[searchStrings.length];
+        for (int i = 0; i < searchStrings.length; i++)
+        {
+            result[i] = searchStrings[i] == null ? null : searchStrings[i].toString();
+        }
+        return result;
     }
 
     /**
@@ -919,3 +951,4 @@ public class StringUtils extends org.apache.commons.lang3.StringUtils
         return sb.toString();
     }
 }
+

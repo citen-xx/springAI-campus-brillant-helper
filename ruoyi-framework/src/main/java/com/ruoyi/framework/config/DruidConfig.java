@@ -11,8 +11,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 import com.alibaba.druid.pool.DruidDataSource;
-import com.alibaba.druid.spring.boot4.autoconfigure.DruidDataSourceBuilder;
-import com.alibaba.druid.spring.boot4.autoconfigure.properties.DruidStatProperties;
+import com.alibaba.druid.spring.boot.autoconfigure.DruidDataSourceBuilder;
 import com.alibaba.druid.util.Utils;
 import com.ruoyi.common.enums.DataSourceType;
 import com.ruoyi.common.utils.spring.SpringUtils;
@@ -25,9 +24,7 @@ import jakarta.servlet.ServletRequest;
 import jakarta.servlet.ServletResponse;
 
 /**
- * druid 配置多数据源
- * 
- * @author ruoyi
+ * Druid 多数据源配置
  */
 @Configuration
 public class DruidConfig
@@ -58,14 +55,7 @@ public class DruidConfig
         setDataSource(targetDataSources, DataSourceType.SLAVE.name(), "slaveDataSource");
         return new DynamicDataSource(masterDataSource, targetDataSources);
     }
-    
-    /**
-     * 设置数据源
-     * 
-     * @param targetDataSources 备选数据源集合
-     * @param sourceName 数据源名称
-     * @param beanName bean名称
-     */
+
     public void setDataSource(Map<Object, Object> targetDataSources, String sourceName, String beanName)
     {
         try
@@ -73,51 +63,51 @@ public class DruidConfig
             DataSource dataSource = SpringUtils.getBean(beanName);
             targetDataSources.put(sourceName, dataSource);
         }
-        catch (Exception e)
+        catch (Exception ignored)
         {
         }
     }
 
     /**
-     * 去除监控页面底部的广告
+     * 去除 Druid 监控页底部广告
+     *
+     * 这里不再依赖 DruidStatProperties Bean 注入，直接使用默认 `/druid/*` 路径，
+     * 避免因 starter 自动配置差异导致应用启动失败。
      */
     @SuppressWarnings({ "rawtypes", "unchecked" })
     @Bean
     @ConditionalOnProperty(name = "spring.datasource.druid.statViewServlet.enabled", havingValue = "true")
-    public FilterRegistrationBean removeDruidFilterRegistrationBean(DruidStatProperties properties)
+    public FilterRegistrationBean removeDruidFilterRegistrationBean()
     {
-        // 获取web监控页面的参数
-        DruidStatProperties.StatViewServlet config = properties.getStatViewServlet();
-        // 提取common.js的配置路径
-        String pattern = config.getUrlPattern() != null ? config.getUrlPattern() : "/druid/*";
+        String pattern = "/druid/*";
         String commonJsPattern = pattern.replaceAll("\\*", "js/common.js");
         final String filePath = "support/http/resources/js/common.js";
-        // 创建filter进行过滤
+
         Filter filter = new Filter()
         {
             @Override
             public void init(jakarta.servlet.FilterConfig filterConfig) throws ServletException
             {
             }
+
             @Override
             public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)
-                    throws IOException, ServletException
+                throws IOException, ServletException
             {
                 chain.doFilter(request, response);
-                // 重置缓冲区，响应头不会被重置
                 response.resetBuffer();
-                // 获取common.js
                 String text = Utils.readFromResource(filePath);
-                // 正则替换banner, 除去底部的广告信息
                 text = text.replaceAll("<a.*?banner\"></a><br/>", "");
                 text = text.replaceAll("powered.*?shrek.wang</a>", "");
                 response.getWriter().write(text);
             }
+
             @Override
             public void destroy()
             {
             }
         };
+
         FilterRegistrationBean registrationBean = new FilterRegistrationBean();
         registrationBean.setFilter(filter);
         registrationBean.addUrlPatterns(commonJsPattern);

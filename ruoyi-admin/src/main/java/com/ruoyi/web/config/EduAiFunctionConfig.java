@@ -39,9 +39,6 @@ public class EduAiFunctionConfig
         this.campusCardMapper = campusCardMapper;
     }
 
-    /**
-     * 查询学生成绩
-     */
     @Bean(name = "getStudentScore")
     @Description("查询指定学生的某门课程成绩")
     public Function<StudentScoreRequest, Integer> getStudentScore()
@@ -54,7 +51,6 @@ public class EduAiFunctionConfig
 
             String studentId = request.studentId().trim();
             String subject = normalizeSubject(request.subject());
-
             if (studentMapper.selectStudentByStudentId(studentId) == null)
             {
                 return 0;
@@ -65,9 +61,6 @@ public class EduAiFunctionConfig
         };
     }
 
-    /**
-     * 查询一卡通余额
-     */
     @Bean(name = "getCardBalance")
     @Description("查询指定学生的一卡通余额")
     public Function<CardBalanceRequest, BigDecimal> getCardBalance()
@@ -79,7 +72,6 @@ public class EduAiFunctionConfig
             }
 
             String studentId = request.studentId().trim();
-
             if (studentMapper.selectStudentByStudentId(studentId) == null)
             {
                 return BigDecimal.ZERO;
@@ -105,19 +97,5 @@ public class EduAiFunctionConfig
 
         String lowerKey = key.toLowerCase();
         return SUBJECT_ALIAS_MAP.getOrDefault(lowerKey, SUBJECT_ALIAS_MAP.getOrDefault(key, key));
-    }
-
-    /**
-     * 成绩查询入参
-     */
-    public record StudentScoreRequest(String studentId, String subject)
-    {
-    }
-
-    /**
-     * 一卡通查询入参
-     */
-    public record CardBalanceRequest(String studentId)
-    {
     }
 }

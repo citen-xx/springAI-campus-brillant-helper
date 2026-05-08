@@ -4,6 +4,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.Set;
 import org.springframework.beans.factory.annotation.Autowired;
+
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -87,7 +88,7 @@ public class SysLoginController
         ajax.put("user", user);
         ajax.put("roles", roles);
         ajax.put("permissions", permissions);
-        ajax.put("isDefaultModifyPwd", initPasswordIsModify(user.getPwdUpdateDate()));
+        ajax.put("isDefaultModifyPod", initPasswordIsModify(user.getPwdUpdateDate()));
         ajax.put("isPasswordExpired", passwordIsExpiration(user.getPwdUpdateDate()));
         return ajax;
     }

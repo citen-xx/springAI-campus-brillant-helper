@@ -3,8 +3,8 @@ package com.ruoyi.framework.config;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadPoolExecutor;
-import com.ruoyi.common.utils.Threads;
 import org.apache.commons.lang3.concurrent.BasicThreadFactory;
+import com.ruoyi.common.utils.Threads;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.annotation.EnableAsync;
@@ -39,8 +39,8 @@ public class ThreadPoolConfig
     protected ScheduledExecutorService scheduledExecutorService()
     {
         return new ScheduledThreadPoolExecutor(corePoolSize,
-            BasicThreadFactory.builder().namingPattern("schedule-pool-%d").daemon(true).build(),
-            new ThreadPoolExecutor.CallerRunsPolicy())
+                new BasicThreadFactory.Builder().namingPattern("schedule-pool-%d").daemon(true).build(),
+                new ThreadPoolExecutor.CallerRunsPolicy())
         {
             @Override
             protected void afterExecute(Runnable r, Throwable t)
