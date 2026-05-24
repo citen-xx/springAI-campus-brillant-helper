@@ -4,12 +4,25 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
 "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.ruoyi.system.mapper.StudentScoreMapper">
 
+    <resultMap id="StudentScoreItemVoResultMap" type="com.ruoyi.system.domain.vo.StudentScoreItemVo">
+        <result property="studentId" column="student_id" />
+        <result property="subject" column="subject" />
+        <result property="score" column="score" />
+    </resultMap>
+
     <select id="selectScoreByStudentIdAndSubject" resultType="java.lang.Integer">
         select score
         from student_score
         where student_id = #{studentId}
           and subject = #{subject}
         limit 1
+    </select>
+
+    <select id="selectScoresByStudentId" resultMap="StudentScoreItemVoResultMap">
+        select student_id, subject, score
+        from student_score
+        where student_id = #{studentId}
+        order by subject asc
     </select>
 
 </mapper>

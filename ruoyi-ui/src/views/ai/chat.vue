@@ -35,6 +35,7 @@
         />
         <div class="composer-actions">
           <span class="tip">Ctrl + Enter 发送，当前会话会保存在浏览器本地</span>
+          <el-button v-if="streaming" plain @click="stopCurrentStream">停止生成</el-button>
           <el-button type="primary" :loading="sending" @click="sendMessage">发送</el-button>
         </div>
       </div>
@@ -46,8 +47,8 @@
 import { getToken } from '@/utils/auth'
 
 const STORAGE_KEY = 'campus_ai_conversation_id'
-const STREAM_ENDPOINT = '/api/ai/chat/stream'
-const LEGACY_STREAM_ENDPOINT = '/system/ai/chat'
+const PUBLIC_STREAM_ENDPOINT = '/api/ai/chat/public/stream'
+const STUDENT_STREAM_ENDPOINT = '/api/ai/chat/student/stream'
 
 export default {
   name: 'AiChat',
@@ -55,7 +56,10 @@ export default {
     return {
       inputText: '',
       sending: false,
+      streaming: false,
       conversationId: '',
+      currentController: null,
+      currentRequestId: 0,
       messages: [
         {
           role: 'assistant',
@@ -67,10 +71,21 @@ export default {
   computed: {
     shortConversationId() {
       return this.conversationId ? this.conversationId.slice(0, 12) : 'N/A'
+    },
+    isStudentRole() {
+      const roles = this.$store.getters.roles || []
+      return roles.includes('student')
     }
   },
   created() {
     this.conversationId = this.loadConversationId()
+  },
+  beforeDestroy() {
+    this.abortCurrentRequest('component destroy')
+  },
+  beforeRouteLeave(to, from, next) {
+    this.abortCurrentRequest('route leave')
+    next()
   },
   methods: {
     loadConversationId() {
@@ -89,6 +104,7 @@ export default {
       return `conv-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
     },
     resetConversation() {
+      this.abortCurrentRequest('reset conversation')
       this.conversationId = this.generateConversationId()
       window.localStorage.setItem(STORAGE_KEY, this.conversationId)
       this.messages = [
@@ -101,19 +117,28 @@ export default {
     },
     async sendMessage() {
       const prompt = this.inputText.trim()
-      if (!prompt || this.sending) {
+      if (!prompt) {
         return
+      }
+
+      if (this.hasActiveRequest()) {
+        this.abortCurrentRequest('superseded by new message')
       }
 
       this.messages.push({ role: 'user', content: prompt })
       const assistantMessage = { role: 'assistant', content: '' }
       this.messages.push(assistantMessage)
       this.inputText = ''
+      const requestId = this.currentRequestId + 1
+      const controller = new AbortController()
+      this.currentRequestId = requestId
+      this.currentController = controller
       this.sending = true
+      this.streaming = true
       this.scrollToBottom()
 
       try {
-        const response = await this.requestStream(prompt)
+        const response = await this.requestStream(prompt, controller)
 
         if (!response.ok) {
           throw new Error(await this.extractErrorMessage(response, `Request failed with status ${response.status}`))
@@ -128,63 +153,80 @@ export default {
           throw new Error(await this.extractErrorMessage(response, '大模型额度已耗尽，请稍后再试'))
         }
 
-        await this.consumeStream(response, assistantMessage)
+        await this.consumeStream(response, assistantMessage, requestId)
       } catch (error) {
+        if (this.isAbortError(error)) {
+          if (!assistantMessage.content) {
+            assistantMessage.content = '已停止生成'
+          }
+          return
+        }
         const message = error.message || '对话失败，请稍后再试'
         assistantMessage.content = message
         this.$message.error(message)
       } finally {
-        this.sending = false
+        if (this.currentRequestId === requestId) {
+          this.finishCurrentRequest(controller)
+        }
         this.scrollToBottom()
       }
     },
-    async requestStream(prompt) {
+    async requestStream(prompt, controller) {
       const payload = {
         prompt,
         query: prompt,
         conversationId: this.conversationId
       }
 
-      const primaryUrl = `${process.env.VUE_APP_BASE_API}${STREAM_ENDPOINT}?conversationId=${encodeURIComponent(this.conversationId)}`
-      const primaryResponse = await fetch(primaryUrl, {
+      const endpoint = this.isStudentRole ? STUDENT_STREAM_ENDPOINT : PUBLIC_STREAM_ENDPOINT
+      const url = `${process.env.VUE_APP_BASE_API}${endpoint}?conversationId=${encodeURIComponent(this.conversationId)}`
+      return fetch(url, {
         method: 'POST',
         headers: this.buildHeaders(),
-        body: JSON.stringify(payload)
-      })
-
-      if (primaryResponse.status !== 404) {
-        return primaryResponse
-      }
-
-      const legacyUrl = `${process.env.VUE_APP_BASE_API}${LEGACY_STREAM_ENDPOINT}`
-      return fetch(legacyUrl, {
-        method: 'POST',
-        headers: this.buildHeaders(),
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: controller.signal
       })
     },
-    async consumeStream(response, assistantMessage) {
+    async consumeStream(response, assistantMessage, requestId) {
       const reader = response.body.getReader()
       const decoder = new TextDecoder('utf-8')
       let buffer = ''
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) {
-          break
+      try {
+        while (this.isRequestActive(requestId)) {
+          const { done, value } = await reader.read()
+          if (done) {
+            break
+          }
+          if (!this.isRequestActive(requestId)) {
+            break
+          }
+
+          buffer += decoder.decode(value, { stream: true })
+          const chunks = buffer.split(/\r?\n\r?\n/)
+          buffer = chunks.pop() || ''
+
+          chunks.forEach((chunk) => {
+            this.consumeSseChunk(chunk, assistantMessage, requestId)
+          })
         }
 
-        buffer += decoder.decode(value, { stream: true })
-        const chunks = buffer.split(/\r?\n\r?\n/)
-        buffer = chunks.pop() || ''
-
-        chunks.forEach((chunk) => {
-          this.consumeSseChunk(chunk, assistantMessage)
-        })
-      }
-
-      if (buffer) {
-        this.consumeSseChunk(buffer, assistantMessage)
+        if (buffer && this.isRequestActive(requestId)) {
+          this.consumeSseChunk(buffer, assistantMessage, requestId)
+        }
+      } finally {
+        if (!this.isRequestActive(requestId)) {
+          try {
+            await reader.cancel()
+          } catch (e) {
+            // 已中止或已关闭时忽略 reader cancel 异常
+          }
+        }
+        try {
+          reader.releaseLock()
+        } catch (e) {
+          // 部分浏览器在 reader 已关闭时会抛错，这里直接忽略
+        }
       }
     },
     async extractErrorMessage(response, fallbackMessage) {
@@ -210,7 +252,10 @@ export default {
       }
       return headers
     },
-    consumeSseChunk(chunk, assistantMessage) {
+    consumeSseChunk(chunk, assistantMessage, requestId) {
+      if (!this.isRequestActive(requestId)) {
+        return
+      }
       const lines = chunk.split(/\r?\n/)
       let data = ''
 
@@ -227,11 +272,17 @@ export default {
       try {
         const payload = JSON.parse(data)
         if (payload.event === 'message' && payload.answer !== undefined && payload.answer !== null) {
+          if (!this.isRequestActive(requestId)) {
+            return
+          }
           assistantMessage.content += payload.answer
           this.scrollToBottom()
           return
         }
         if (payload.msg || payload.message) {
+          if (!this.isRequestActive(requestId)) {
+            return
+          }
           assistantMessage.content += payload.msg || payload.message
           this.scrollToBottom()
           return
@@ -242,6 +293,35 @@ export default {
 
       assistantMessage.content += data
       this.scrollToBottom()
+    },
+    hasActiveRequest() {
+      return !!this.currentController
+    },
+    isRequestActive(requestId) {
+      return !!this.currentController && this.currentRequestId === requestId
+    },
+    finishCurrentRequest(controller) {
+      if (this.currentController === controller) {
+        this.currentController = null
+      }
+      this.sending = false
+      this.streaming = false
+    },
+    abortCurrentRequest(reason) {
+      if (!this.currentController) {
+        return
+      }
+      const controller = this.currentController
+      this.currentController = null
+      this.sending = false
+      this.streaming = false
+      controller.abort()
+    },
+    stopCurrentStream() {
+      this.abortCurrentRequest('manual stop')
+    },
+    isAbortError(error) {
+      return error && error.name === 'AbortError'
     },
     scrollToBottom() {
       this.$nextTick(() => {

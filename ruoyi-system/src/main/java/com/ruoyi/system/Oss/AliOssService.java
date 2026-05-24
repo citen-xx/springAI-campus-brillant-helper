@@ -2,12 +2,15 @@ package com.ruoyi.system.Oss;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URI;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.UUID;
 import com.aliyun.oss.OSS;
 import com.aliyun.oss.OSSClientBuilder;
 import com.aliyun.oss.model.OSSObject;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -18,6 +21,8 @@ import org.springframework.web.multipart.MultipartFile;
 @Service
 public class AliOssService
 {
+    private static final Logger log = LoggerFactory.getLogger(AliOssService.class);
+
     @Value("${aliyun.oss.endpoint}")
     private String endpoint;
 
@@ -96,6 +101,49 @@ public class AliOssService
     public InputStream getObjectInputStreamByUrl(String fileUrl)
     {
         return getObjectInputStream(extractObjectKey(fileUrl));
+    }
+
+    /**
+     * 通过 OSS 文件 URL 删除对象。
+     *
+     * @param fileUrl OSS 文件 URL
+     */
+    public void deleteObjectByUrl(String fileUrl)
+    {
+        deleteObject(extractObjectKey(fileUrl));
+    }
+
+    /**
+     * 通过 objectKey 删除 OSS 对象。
+     *
+     * @param objectKey OSS 对象路径
+     */
+    public void deleteObject(String objectKey)
+    {
+        if (objectKey == null || objectKey.isBlank())
+        {
+            throw new IllegalArgumentException("objectKey 不能为空");
+        }
+
+        OSS ossClient = new OSSClientBuilder().build(endpoint, accessKeyId, accessKeySecret);
+        try
+        {
+            if (!ossClient.doesObjectExist(bucketName, objectKey))
+            {
+                log.warn("OSS object already missing, bucketName={}, objectKey={}", bucketName, objectKey);
+                return;
+            }
+            ossClient.deleteObject(bucketName, objectKey);
+            log.info("OSS object deleted, bucketName={}, objectKey={}", bucketName, objectKey);
+        }
+        catch (Exception e)
+        {
+            throw new RuntimeException("删除 OSS 对象失败: " + objectKey, e);
+        }
+        finally
+        {
+            ossClient.shutdown();
+        }
     }
 
     /**

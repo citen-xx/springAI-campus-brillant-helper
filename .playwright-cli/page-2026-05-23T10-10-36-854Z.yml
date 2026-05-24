@@ -1,0 +1,118 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - link "若依管理系统" [ref=e6] [cursor=pointer]:
+        - /url: /
+        - img [ref=e7]
+        - heading "若依管理系统" [level=1] [ref=e8]
+      - menubar [ref=e12]:
+        - link "首页" [ref=e14] [cursor=pointer]:
+          - /url: /index
+          - menuitem "首页" [ref=e15]:
+            - img [ref=e16]
+            - text: 首页
+        - menuitem "" [expanded] [ref=e19]:
+          - generic [ref=e21] [cursor=pointer]: 
+          - menu [ref=e22]:
+            - link "AI工作台" [ref=e24] [cursor=pointer]:
+              - /url: /ai/workbench
+              - menuitem "AI工作台" [ref=e25]:
+                - img [ref=e26]
+                - text: AI工作台
+            - link "智能问答" [ref=e29] [cursor=pointer]:
+              - /url: /ai/chat
+              - menuitem "智能问答" [ref=e30]:
+                - img [ref=e31]
+                - text: 智能问答
+            - link "知识文档" [ref=e34] [cursor=pointer]:
+              - /url: /ai/knowledge
+              - menuitem "知识文档" [ref=e35]:
+                - img [ref=e36]
+                - text: 知识文档
+            - link "问答库" [ref=e39] [cursor=pointer]:
+              - /url: /ai/qa
+              - menuitem "问答库" [ref=e40]:
+                - img [ref=e41]
+                - text: 问答库
+            - link "学生管理" [ref=e44] [cursor=pointer]:
+              - /url: /ai/student
+              - menuitem "学生管理" [ref=e45]:
+                - img [ref=e46]
+                - text: 学生管理
+            - link "教务工具" [ref=e49] [cursor=pointer]:
+              - /url: /ai/edu-tools
+              - menuitem "教务工具" [ref=e50]:
+                - img [ref=e51]
+                - text: 教务工具
+    - generic [ref=e54]:
+      - generic [ref=e55]:
+        - generic [ref=e56]:
+          - img [ref=e58] [cursor=pointer]
+          - navigation "Breadcrumb" [ref=e60]:
+            - generic:
+              - generic [ref=e61]:
+                - link "首页" [ref=e62]
+                - text: /
+              - link "智能问答" [ref=e64]
+          - generic [ref=e65]:
+            - img [ref=e67] [cursor=pointer]
+            - img [ref=e70] [cursor=pointer]
+            - img [ref=e73] [cursor=pointer]
+            - img [ref=e76] [cursor=pointer]
+            - button [ref=e79] [cursor=pointer]:
+              - img [ref=e80]
+            - generic [ref=e82] [cursor=pointer]:
+              - generic [ref=e83]:
+                - img [ref=e84]
+                - generic: "3"
+              - text: 
+            - button "studentA" [ref=e87] [cursor=pointer]:
+              - img [ref=e88]
+              - text: studentA
+        - generic [ref=e89]:
+          - generic [ref=e91]: 
+          - generic [ref=e94]:
+            - generic [ref=e95] [cursor=pointer]: 首页
+            - generic [ref=e96] [cursor=pointer]:
+              - text: 智能问答
+              - generic [ref=e97]: 
+          - generic [ref=e101]: 
+          - generic [ref=e102]:
+            - button "" [ref=e103] [cursor=pointer]:
+              - generic [ref=e104]: 
+            - text:      
+          - generic "刷新页面" [ref=e105] [cursor=pointer]:
+            - generic [ref=e106]: 
+            - text: 刷新
+          - text:    
+      - generic [ref=e109]:
+        - generic [ref=e110]:
+          - generic [ref=e111]:
+            - heading "Campus AI Chat" [level=2] [ref=e112]
+            - paragraph [ref=e113]: 当前默认接入带 RAG、会话记忆与 Function Calling 的流式聊天接口。
+          - generic [ref=e114]:
+            - generic [ref=e115]: SSE
+            - generic [ref=e116]: "conversation: 8f4e134f-83a"
+            - button "新会话" [ref=e117] [cursor=pointer]
+        - generic [ref=e118]:
+          - generic [ref=e119]:
+            - generic [ref=e120]: AI
+            - generic [ref=e121]: 你好，我已经接入流式对话、会话记忆、知识库检索和工具调用。你可以直接开始提问。
+          - generic [ref=e128]:
+            - generic [ref=e129]: U
+            - generic [ref=e130]: 请非常详细地分成十五个部分介绍校园里新生从入学到学期结束需要完成的所有事项，每一部分都给出步骤、时间点、注意事项和常见问题。
+          - generic [ref=e131]:
+            - generic [ref=e132]: AI
+            - generic [ref=e133]: 当前知识库中没有检索到足够信息。
+          - generic [ref=e134]:
+            - generic [ref=e135]: U
+            - generic [ref=e136]: 请写一篇尽可能详细、尽可能长的新生入学到毕业的全流程攻略，至少分二十五个章节，每个章节都包含流程、材料、注意事项、风险点和示例。
+          - generic [ref=e137]:
+            - generic [ref=e138]: AI
+            - generic [ref=e139]: 当前知识库中没有检索到足够信息。
+        - generic [ref=e122]:
+          - textbox "请输入问题，系统会自动携带 conversationId 进行多轮上下文对话。" [ref=e124]
+          - generic [ref=e125]:
+            - generic [ref=e126]: Ctrl + Enter 发送，当前会话会保存在浏览器本地
+            - button "发送" [ref=e127] [cursor=pointer]
+  - text: 

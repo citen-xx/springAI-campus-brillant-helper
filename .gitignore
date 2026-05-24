@@ -39,8 +39,15 @@ nbdist/
 ######################################################################
 # Others
 *.log
+*.patch
 *.xml.versionsBackup
 *.swp
+.m2/
+tmp/
+tmp/*.json
+tmp/logs/
+tmp/redis/
+tmp_db_setup.sql
 
 !*/build/*.java
 !*/build/*.html

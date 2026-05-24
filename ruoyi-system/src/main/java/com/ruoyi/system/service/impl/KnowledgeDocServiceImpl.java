@@ -3,11 +3,14 @@ package com.ruoyi.system.service.impl;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import com.ruoyi.common.exception.ServiceException;
 import com.ruoyi.common.utils.DateUtils;
 import com.ruoyi.common.utils.StringUtils;
+import com.ruoyi.system.Oss.AliOssService;
 import com.ruoyi.system.domain.KnowledgeDoc;
 import com.ruoyi.system.mapper.KnowledgeDocMapper;
 import com.ruoyi.system.service.IKnowledgeDocService;
+import com.ruoyi.system.service.RagService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -35,6 +38,12 @@ public class KnowledgeDocServiceImpl implements IKnowledgeDocService
 
     @Autowired
     private ApplicationContext applicationContext;
+
+    @Autowired
+    private RagService ragService;
+
+    @Autowired
+    private AliOssService aliOssService;
 
     @Value("${dify.api-key:}")
     private String difyApiKey;
@@ -118,13 +127,41 @@ public class KnowledgeDocServiceImpl implements IKnowledgeDocService
     @Override
     public int deleteKnowledgeDocByDocIds(Long[] docIds)
     {
-        return knowledgeDocMapper.deleteKnowledgeDocByDocIds(docIds);
+        if (docIds == null || docIds.length == 0)
+        {
+            throw new ServiceException("待删除文档不能为空");
+        }
+
+        int successCount = 0;
+        StringBuilder failedDocs = new StringBuilder();
+        for (Long docId : docIds)
+        {
+            try
+            {
+                successCount += deleteSingleKnowledgeDoc(docId);
+            }
+            catch (Exception ex)
+            {
+                log.error("Knowledge doc delete failed, docId={}", docId, ex);
+                if (failedDocs.length() > 0)
+                {
+                    failedDocs.append("; ");
+                }
+                failedDocs.append("docId=").append(docId).append(", reason=").append(ex.getMessage());
+            }
+        }
+
+        if (failedDocs.length() > 0)
+        {
+            throw new ServiceException("知识库删除存在失败项: success=" + successCount + ", " + failedDocs);
+        }
+        return successCount;
     }
 
     @Override
     public int deleteKnowledgeDocByDocId(Long docId)
     {
-        return knowledgeDocMapper.deleteKnowledgeDocByDocId(docId);
+        return deleteSingleKnowledgeDoc(docId);
     }
 
     private void uploadToDifyKnowledge(KnowledgeDoc knowledgeDoc)
@@ -164,5 +201,39 @@ public class KnowledgeDocServiceImpl implements IKnowledgeDocService
         updateDoc.setSyncStatus(syncStatus);
         updateDoc.setUpdateTime(DateUtils.getNowDate());
         knowledgeDocMapper.updateKnowledgeDoc(updateDoc);
+    }
+
+    private int deleteSingleKnowledgeDoc(Long docId)
+    {
+        if (docId == null)
+        {
+            throw new ServiceException("docId 不能为空");
+        }
+
+        KnowledgeDoc knowledgeDoc = knowledgeDocMapper.selectKnowledgeDocByDocId(docId);
+        if (knowledgeDoc == null)
+        {
+            throw new ServiceException("知识库文档不存在, docId=" + docId);
+        }
+        if (StringUtils.isEmpty(knowledgeDoc.getFileUrl()))
+        {
+            throw new ServiceException("知识库文档 fileUrl 为空, docId=" + docId);
+        }
+
+        log.info("Deleting knowledge doc resources, docId={}, docName={}, fileUrl={}",
+            knowledgeDoc.getDocId(), knowledgeDoc.getDocName(), knowledgeDoc.getFileUrl());
+
+        ragService.deleteByFileUrl(knowledgeDoc.getFileUrl());
+        aliOssService.deleteObjectByUrl(knowledgeDoc.getFileUrl());
+
+        int rows = knowledgeDocMapper.deleteKnowledgeDocByDocId(docId);
+        if (rows <= 0)
+        {
+            throw new ServiceException("数据库删除失败, docId=" + docId);
+        }
+
+        log.info("Knowledge doc deleted successfully, docId={}, docName={}",
+            knowledgeDoc.getDocId(), knowledgeDoc.getDocName());
+        return rows;
     }
 }

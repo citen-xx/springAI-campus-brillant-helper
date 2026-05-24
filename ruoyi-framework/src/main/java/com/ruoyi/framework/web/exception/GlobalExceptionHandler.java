@@ -1,5 +1,6 @@
 package com.ruoyi.framework.web.exception;
 
+import java.io.IOException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -97,6 +98,11 @@ public class GlobalExceptionHandler
     public AjaxResult handleRuntimeException(RuntimeException e, HttpServletRequest request)
     {
         String requestURI = request.getRequestURI();
+        if (isClientDisconnectException(e))
+        {
+            log.warn("请求地址'{}',客户端连接已断开'{}'", requestURI, extractClientDisconnectMessage(e));
+            return null;
+        }
         log.error("请求地址'{}',发生未知异常.", requestURI, e);
         return AjaxResult.error(e.getMessage());
     }
@@ -108,6 +114,11 @@ public class GlobalExceptionHandler
     public AjaxResult handleException(Exception e, HttpServletRequest request)
     {
         String requestURI = request.getRequestURI();
+        if (isClientDisconnectException(e))
+        {
+            log.warn("请求地址'{}',客户端连接已断开'{}'", requestURI, extractClientDisconnectMessage(e));
+            return null;
+        }
         log.error("请求地址'{}',发生系统异常.", requestURI, e);
         return AjaxResult.error(e.getMessage());
     }
@@ -141,5 +152,43 @@ public class GlobalExceptionHandler
     public AjaxResult handleDemoModeException(DemoModeException e)
     {
         return AjaxResult.error("演示模式，不允许操作");
+    }
+
+    private boolean isClientDisconnectException(Throwable throwable)
+    {
+        Throwable current = throwable;
+        while (current != null)
+        {
+            if ("org.springframework.web.context.request.async.AsyncRequestNotUsableException".equals(current.getClass().getName())
+                || "org.apache.catalina.connector.ClientAbortException".equals(current.getClass().getName()))
+            {
+                return true;
+            }
+            if (current instanceof IOException && StringUtils.containsAnyIgnoreCase(current.getMessage(),
+                "Broken pipe",
+                "Connection reset",
+                "forcibly closed",
+                "An established connection was aborted",
+                "你的主机中的软件中止了一个已建立的连接"))
+            {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
+    }
+
+    private String extractClientDisconnectMessage(Throwable throwable)
+    {
+        Throwable current = throwable;
+        while (current != null)
+        {
+            if (StringUtils.isNotEmpty(current.getMessage()))
+            {
+                return current.getMessage();
+            }
+            current = current.getCause();
+        }
+        return throwable.getClass().getSimpleName();
     }
 }

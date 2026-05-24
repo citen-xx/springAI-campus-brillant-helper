@@ -4,24 +4,32 @@ import java.util.List;
 import com.ruoyi.system.domain.Student;
 
 /**
- * 学生Mapper接口
- * 
+ * 学生 Mapper 接口
+ *
  * @author ruoyi
  * @date 2026-04-18
  */
-public interface StudentMapper 
+public interface StudentMapper
 {
     /**
-     * 查询学生
-     * 
-     * @param studentId 学生主键
+     * 按学号查询学生
+     *
+     * @param studentId 学号
      * @return 学生
      */
     public Student selectStudentByStudentId(String studentId);
 
     /**
+     * 按系统用户ID查询学生
+     *
+     * @param userId 系统用户ID
+     * @return 学生
+     */
+    public Student selectStudentByUserId(Long userId);
+
+    /**
      * 查询学生列表
-     * 
+     *
      * @param student 学生
      * @return 学生集合
      */
@@ -29,7 +37,7 @@ public interface StudentMapper
 
     /**
      * 新增学生
-     * 
+     *
      * @param student 学生
      * @return 结果
      */
@@ -37,7 +45,7 @@ public interface StudentMapper
 
     /**
      * 修改学生
-     * 
+     *
      * @param student 学生
      * @return 结果
      */
@@ -45,16 +53,16 @@ public interface StudentMapper
 
     /**
      * 删除学生
-     * 
-     * @param studentId 学生主键
+     *
+     * @param studentId 学号
      * @return 结果
      */
     public int deleteStudentByStudentId(String studentId);
 
     /**
      * 批量删除学生
-     * 
-     * @param studentIds 需要删除的数据主键集合
+     *
+     * @param studentIds 学号集合
      * @return 结果
      */
     public int deleteStudentByStudentIds(String[] studentIds);

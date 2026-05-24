@@ -15,6 +15,7 @@ import org.springframework.ai.reader.tika.TikaDocumentReader;
 import org.springframework.ai.transformer.splitter.TokenTextSplitter;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
@@ -67,7 +68,7 @@ public class RagService
         String fileName = extractFileName(fileUrl);
         try (InputStream inputStream = aliOssService.getObjectInputStreamByUrl(fileUrl))
         {
-            importInputStreamToVectorStore(inputStream, fileName);
+            importInputStreamToVectorStore(inputStream, fileName, fileUrl);
         }
         catch (Exception e)
         {
@@ -82,6 +83,11 @@ public class RagService
      * @param fileName 文件名
      */
     public void importInputStreamToVectorStore(InputStream inputStream, String fileName)
+    {
+        importInputStreamToVectorStore(inputStream, fileName, null);
+    }
+
+    public void importInputStreamToVectorStore(InputStream inputStream, String fileName, String fileUrl)
     {
         if (inputStream == null)
         {
@@ -121,7 +127,7 @@ public class RagService
             }
 
             // 3. 手动追加 overlap，增强跨段语义连续性
-            List<Document> enrichedDocuments = applyOverlapAndMetadata(chunkedDocuments, fileName);
+            List<Document> enrichedDocuments = applyOverlapAndMetadata(chunkedDocuments, fileName, fileUrl);
 
             // 4. 写入 Redis 向量库
             vectorStore.accept(enrichedDocuments);
@@ -185,7 +191,47 @@ public class RagService
         return vectorStore.similaritySearch(searchRequest);
     }
 
-    private List<Document> applyOverlapAndMetadata(List<Document> chunkedDocuments, String fileName)
+    /**
+     * 根据 fileUrl 删除该文档对应的全部向量切片。
+     *
+     * @param fileUrl OSS 文件 URL
+     */
+    public void deleteByFileUrl(String fileUrl)
+    {
+        if (fileUrl == null || fileUrl.isBlank())
+        {
+            throw new IllegalArgumentException("fileUrl 不能为空");
+        }
+
+        String fileName = extractFileName(fileUrl);
+        FilterExpressionBuilder filterBuilder = new FilterExpressionBuilder();
+        log.info("Deleting vector chunks, fileUrl={}, fileName={}, strategy=fileUrl-first", fileUrl, fileName);
+
+        try
+        {
+            vectorStore.delete(filterBuilder.eq("fileUrl", fileUrl).build());
+            log.info("Vector delete completed by fileUrl metadata, fileUrl={}", fileUrl);
+        }
+        catch (Exception fileUrlDeleteEx)
+        {
+            log.warn("Vector delete by fileUrl metadata failed, fileUrl={}, reason={}, fallback=source/fileName",
+                fileUrl, fileUrlDeleteEx.getMessage());
+            try
+            {
+                vectorStore.delete(filterBuilder.eq("source", fileName).build());
+                log.warn(
+                    "Vector delete fallback by source/fileName succeeded, fileName={}, may affect same-name documents without fileUrl metadata",
+                    fileName);
+            }
+            catch (Exception sourceDeleteEx)
+            {
+                throw new RuntimeException("删除向量数据失败: fileUrl=" + fileUrl + ", fileName=" + fileName,
+                    sourceDeleteEx);
+            }
+        }
+    }
+
+    private List<Document> applyOverlapAndMetadata(List<Document> chunkedDocuments, String fileName, String fileUrl)
     {
         List<Document> result = new ArrayList<>(chunkedDocuments.size());
         String previousChunkText = "";
@@ -211,6 +257,10 @@ public class RagService
             Map<String, Object> metadata = new HashMap<>(current.getMetadata());
             metadata.put("fileName", fileName);
             metadata.put("source", fileName);
+            if (fileUrl != null && !fileUrl.isBlank())
+            {
+                metadata.put("fileUrl", fileUrl);
+            }
             metadata.put("chunkIndex", i);
             metadata.put("chunkSize", currentText.length());
 
