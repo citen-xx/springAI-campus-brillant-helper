@@ -36,16 +36,14 @@ public class CurrentStudentService
 
     public Student requireCurrentStudent(ToolContext toolContext)
     {
-        String studentId = extractStudentId(toolContext);
-        if (StringUtils.isNotEmpty(studentId))
+        Student currentStudent = requireCurrentStudent();
+        String contextStudentId = extractStudentId(toolContext);
+        if (StringUtils.isNotEmpty(contextStudentId)
+            && !contextStudentId.equals(currentStudent.getStudentId()))
         {
-            Student student = studentMapper.selectStudentByStudentId(studentId);
-            if (student != null)
-            {
-                return student;
-            }
+            throw new ServiceException("工具上下文身份与当前登录学生不一致", HttpStatus.FORBIDDEN);
         }
-        return requireCurrentStudent();
+        return currentStudent;
     }
 
     public String requireCurrentStudentId()
