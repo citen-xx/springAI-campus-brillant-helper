@@ -48,6 +48,9 @@ tmp/*.json
 tmp/logs/
 tmp/redis/
 tmp_db_setup.sql
+.env
+.env.*
+!.env.example
 
 !*/build/*.java
 !*/build/*.html

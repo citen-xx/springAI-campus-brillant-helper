@@ -50,8 +50,8 @@ spring:
 
   ai:
     openai:
-      api-key: sk-93d2acfc2c0943aba471418e24a64649
-      base-url: https://dashscope.aliyuncs.com/compatible-mode
+      api-key: ${DASHSCOPE_API_KEY}
+      base-url: ${DASHSCOPE_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode}
       chat:
         options:
           model: qwen-plus
@@ -60,17 +60,17 @@ spring:
           model: text-embedding-v3
     vectorstore:
       redis:
-        uri: redis://localhost:6379
-        index: campus_knowledge
-        prefix: campus_knowledge
+        uri: ${VECTOR_REDIS_URI:redis://localhost:6379}
+        index: ${VECTOR_INDEX_NAME:campus_knowledge_v2}
+        prefix: ${VECTOR_KEY_PREFIX:campus_knowledge_v2}
         initialize-schema: true
 
   data:
     redis:
-      host: localhost
-      port: 6379
-      database: 7
-      password: 123456
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      database: ${REDIS_DATABASE:7}
+      password: ${REDIS_PASSWORD:}
       timeout: 10s
       lettuce:
         pool:
@@ -82,7 +82,7 @@ spring:
 # token 配置
 token:
   header: Authorization
-  secret: abcdefghijklmnopqrstuvwxyz
+  secret: ${JWT_SECRET}
   expireTime: 30
 
 # MyBatis 配置
@@ -130,3 +130,18 @@ aliyun:
     access-key-secret: ${ALIYUN_OSS_ACCESS_KEY_SECRET}
     bucket-name: ${ALIYUN_OSS_BUCKET_NAME}
     directory: campus-ai
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+campus:
+  ai:
+    rag:
+      chunk-size: ${RAG_CHUNK_SIZE:800}
+      min-chunk-size-chars: ${RAG_MIN_CHUNK_SIZE_CHARS:200}
+      overlap-chars: ${RAG_OVERLAP_CHARS:100}
+      top-k: ${RAG_TOP_K:3}
+      similarity-threshold: ${RAG_SIMILARITY_THRESHOLD:0.6}
