@@ -17,6 +17,10 @@ public class KnowledgeDoc extends BaseEntity
     @Excel(name = "fileUrl")
     private String fileUrl;
 
+    private String contentHash;
+
+    private String documentType;
+
     @Excel(name = "syncStatus", readConverterExp = "0=pending,1=syncing,2=success")
     private String status;
 
@@ -50,6 +54,26 @@ public class KnowledgeDoc extends BaseEntity
         return fileUrl;
     }
 
+    public String getContentHash()
+    {
+        return contentHash;
+    }
+
+    public void setContentHash(String contentHash)
+    {
+        this.contentHash = contentHash;
+    }
+
+    public String getDocumentType()
+    {
+        return documentType;
+    }
+
+    public void setDocumentType(String documentType)
+    {
+        this.documentType = documentType;
+    }
+
     public void setStatus(String status)
     {
         this.status = status;
@@ -78,6 +102,8 @@ public class KnowledgeDoc extends BaseEntity
             .append("docId", getDocId())
             .append("docName", getDocName())
             .append("fileUrl", getFileUrl())
+            .append("contentHash", getContentHash())
+            .append("documentType", getDocumentType())
             .append("syncStatus", getSyncStatus())
             .append("createBy", getCreateBy())
             .append("createTime", getCreateTime())

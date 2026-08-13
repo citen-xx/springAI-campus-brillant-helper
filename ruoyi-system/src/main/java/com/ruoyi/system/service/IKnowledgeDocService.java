@@ -2,6 +2,7 @@ package com.ruoyi.system.service;
 
 import java.util.List;
 import com.ruoyi.system.domain.KnowledgeDoc;
+import org.springframework.web.multipart.MultipartFile;
 
 public interface IKnowledgeDocService
 {
@@ -9,11 +10,9 @@ public interface IKnowledgeDocService
 
     public List<KnowledgeDoc> selectKnowledgeDocList(KnowledgeDoc knowledgeDoc);
 
-    public int insertKnowledgeDoc(KnowledgeDoc knowledgeDoc);
+    public KnowledgeDoc importFile(MultipartFile file, String docName, String remark);
 
-    public void asyncUploadToDifyEngine(Long docId);
-
-    public int updateKnowledgeDoc(KnowledgeDoc knowledgeDoc);
+    public KnowledgeDoc replaceFile(Long docId, MultipartFile file, String docName, String remark);
 
     public int deleteKnowledgeDocByDocIds(Long[] docIds);
 
