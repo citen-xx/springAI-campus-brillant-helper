@@ -3,13 +3,11 @@
     <div class="chat-shell">
       <div class="chat-header">
         <div class="header-main">
-          <h2>Campus AI Chat</h2>
-          <p>当前默认接入带 RAG、会话记忆与 Function Calling 的流式聊天接口。</p>
+          <h2>校园智能助手</h2>
         </div>
         <div class="header-side">
-          <el-tag size="small" type="success">SSE</el-tag>
           <el-tag size="small" type="info">conversation: {{ shortConversationId }}</el-tag>
-          <el-button size="mini" plain @click="resetConversation">新会话</el-button>
+          <el-button size="mini" plain icon="el-icon-refresh" @click="resetConversation">新会话</el-button>
         </div>
       </div>
 
@@ -20,7 +18,23 @@
           :class="['message-row', message.role === 'user' ? 'is-user' : 'is-assistant']"
         >
           <div class="avatar">{{ message.role === 'user' ? 'U' : 'AI' }}</div>
-          <div class="bubble">{{ message.content }}</div>
+          <div class="message-content">
+            <div class="bubble">{{ message.content }}</div>
+            <div v-if="message.sources && message.sources.length" class="sources">
+              <div class="sources-title">参考来源</div>
+              <a
+                v-for="source in message.sources"
+                :key="`${source.docId}-${source.chunkIndex}`"
+                class="source-item"
+                :href="source.sourceUrl || undefined"
+                :target="source.sourceUrl ? '_blank' : undefined"
+                :rel="source.sourceUrl ? 'noopener noreferrer' : undefined"
+              >
+                <strong>{{ source.fileName || `文档 ${source.docId}` }}</strong>
+                <span>{{ source.section || '正文' }} · chunk {{ source.chunkIndex }}</span>
+              </a>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -30,13 +44,15 @@
           type="textarea"
           :rows="4"
           resize="none"
-          placeholder="请输入问题，系统会自动携带 conversationId 进行多轮上下文对话。"
+          placeholder="请输入问题"
           @keyup.ctrl.enter.native="sendMessage"
         />
         <div class="composer-actions">
-          <span class="tip">Ctrl + Enter 发送，当前会话会保存在浏览器本地</span>
-          <el-button v-if="streaming" plain @click="stopCurrentStream">停止生成</el-button>
-          <el-button type="primary" :loading="sending" @click="sendMessage">发送</el-button>
+          <span />
+          <div>
+            <el-button v-if="streaming" plain icon="el-icon-close" @click="stopCurrentStream">停止</el-button>
+            <el-button type="primary" icon="el-icon-s-promotion" :loading="sending" @click="sendMessage">发送</el-button>
+          </div>
         </div>
       </div>
     </div>
@@ -63,7 +79,7 @@ export default {
       messages: [
         {
           role: 'assistant',
-          content: '你好，我已经接入流式对话、会话记忆、知识库检索和工具调用。你可以直接开始提问。'
+          content: '你好，请问你想了解哪项校园事务？'
         }
       ]
     }
@@ -103,8 +119,17 @@ export default {
       }
       return `conv-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`
     },
-    resetConversation() {
+    async resetConversation() {
       this.abortCurrentRequest('reset conversation')
+      const previousConversationId = this.conversationId
+      if (previousConversationId) {
+        try {
+          await this.clearServerConversation(previousConversationId)
+        } catch (error) {
+          this.$message.error(error.message || '清理服务端会话失败')
+          return
+        }
+      }
       this.conversationId = this.generateConversationId()
       window.localStorage.setItem(STORAGE_KEY, this.conversationId)
       this.messages = [
@@ -114,6 +139,17 @@ export default {
         }
       ]
       this.$message.success('已切换到新会话')
+    },
+    async clearServerConversation(conversationId) {
+      const channel = this.isStudentRole ? 'student' : 'public'
+      const url = `${process.env.VUE_APP_BASE_API}/api/ai/chat/${channel}/conversations/${encodeURIComponent(conversationId)}`
+      const response = await fetch(url, {
+        method: 'DELETE',
+        headers: this.buildHeaders()
+      })
+      if (!response.ok) {
+        throw new Error(await this.extractErrorMessage(response, '服务端会话清理失败'))
+      }
     },
     async sendMessage() {
       const prompt = this.inputText.trim()
@@ -126,7 +162,7 @@ export default {
       }
 
       this.messages.push({ role: 'user', content: prompt })
-      const assistantMessage = { role: 'assistant', content: '' }
+      const assistantMessage = { role: 'assistant', content: '', sources: [] }
       this.messages.push(assistantMessage)
       this.inputText = ''
       const requestId = this.currentRequestId + 1
@@ -271,11 +307,16 @@ export default {
 
       try {
         const payload = JSON.parse(data)
-        if (payload.event === 'message' && payload.answer !== undefined && payload.answer !== null) {
+        if ((payload.event === 'answer' || payload.event === 'message') && payload.answer !== undefined && payload.answer !== null) {
           if (!this.isRequestActive(requestId)) {
             return
           }
           assistantMessage.content += payload.answer
+          this.scrollToBottom()
+          return
+        }
+        if (payload.event === 'sources' && Array.isArray(payload.sources)) {
+          assistantMessage.sources = payload.sources
           this.scrollToBottom()
           return
         }
@@ -338,23 +379,19 @@ export default {
 <style scoped>
 .chat-page {
   min-height: calc(100vh - 84px);
-  padding: 24px;
-  background:
-    radial-gradient(circle at top left, rgba(24, 144, 255, 0.14), transparent 32%),
-    linear-gradient(180deg, #f6fbff 0%, #eef3f8 100%);
+  padding: 16px 24px;
+  background: #f4f6f8;
 }
 
 .chat-shell {
-  max-width: 980px;
-  height: calc(100vh - 132px);
+  max-width: 1120px;
+  height: calc(100vh - 116px);
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid rgba(24, 144, 255, 0.12);
-  border-radius: 24px;
-  box-shadow: 0 20px 40px rgba(30, 60, 90, 0.08);
-  backdrop-filter: blur(8px);
+  background: #ffffff;
+  border: 1px solid #dfe4e8;
+  border-radius: 8px;
   overflow: hidden;
 }
 
@@ -363,21 +400,15 @@ export default {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  padding: 24px 28px 20px;
-  border-bottom: 1px solid #e8f1fb;
+  padding: 14px 18px;
+  border-bottom: 1px solid #e5e8eb;
 }
 
 .header-main h2 {
   margin: 0;
-  font-size: 28px;
+  font-size: 18px;
   line-height: 1.2;
-  color: #16324f;
-}
-
-.header-main p {
-  margin: 8px 0 0;
-  color: #5f7590;
-  font-size: 14px;
+  color: #303133;
 }
 
 .header-side {
@@ -390,7 +421,7 @@ export default {
 .message-list {
   flex: 1;
   overflow-y: auto;
-  padding: 28px;
+  padding: 20px;
 }
 
 .message-row {
@@ -411,19 +442,19 @@ export default {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 14px;
+  border-radius: 6px;
   font-size: 13px;
   font-weight: 700;
-  letter-spacing: 0.04em;
-  color: #16324f;
-  background: linear-gradient(135deg, #d7e9ff 0%, #f7fbff 100%);
-  border: 1px solid #c6ddfb;
+  letter-spacing: 0;
+  color: #303133;
+  background: #e7ecef;
+  border: 1px solid #d2d9dd;
 }
 
 .bubble {
   max-width: min(78%, 680px);
   padding: 14px 16px;
-  border-radius: 18px;
+  border-radius: 8px;
   line-height: 1.7;
   font-size: 15px;
   white-space: pre-wrap;
@@ -431,12 +462,47 @@ export default {
   color: #1f3247;
   background: #ffffff;
   border: 1px solid #e6eef7;
-  box-shadow: 0 10px 18px rgba(45, 76, 107, 0.06);
+}
+
+.message-content {
+  max-width: min(78%, 680px);
+}
+
+.message-content .bubble {
+  max-width: none;
+}
+
+.sources {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-left: 3px solid #409eff;
+  background: #f5f9ff;
+}
+
+.sources-title {
+  margin-bottom: 6px;
+  color: #4b6278;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.source-item {
+  display: flex;
+  flex-direction: column;
+  margin-top: 6px;
+  color: #276da8;
+  font-size: 12px;
+  line-height: 1.5;
+  text-decoration: none;
+}
+
+.source-item span {
+  color: #6b7f92;
 }
 
 .message-row.is-user .bubble {
   color: #ffffff;
-  background: linear-gradient(135deg, #1890ff 0%, #0f6fd1 100%);
+  background: #3b7a57;
   border-color: transparent;
 }
 
@@ -484,6 +550,10 @@ export default {
   }
 
   .bubble {
+    max-width: 86%;
+  }
+
+  .message-content {
     max-width: 86%;
   }
 
