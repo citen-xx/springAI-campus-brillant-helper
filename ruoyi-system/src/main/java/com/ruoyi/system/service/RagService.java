@@ -1,15 +1,19 @@
 package com.ruoyi.system.service;
 
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import com.ruoyi.system.Oss.AliOssService;
+import com.ruoyi.system.domain.KnowledgeDoc;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.reader.tika.TikaDocumentReader;
 import org.springframework.ai.transformer.splitter.TokenTextSplitter;
@@ -18,257 +22,105 @@ import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.stereotype.Service;
-import reactor.core.publisher.Flux;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
 
-/**
- * RAG 工作流服务
- *
- * 职责：
- * 1. 从 OSS / 本地输入流读取文档
- * 2. 使用 Tika 解析文本
- * 3. 对长文本进行切片和重叠拼接
- * 4. 写入 Redis 向量库
- * 5. 聊天时执行向量检索并将检索结果作为系统提示词注入模型
- */
 @Service
 public class RagService
 {
     private static final Logger log = LoggerFactory.getLogger(RagService.class);
-
-    /**
-     * 经验值：
-     * chunkSize 不宜过大，否则召回精度下降；也不宜过小，否则上下文碎片化严重。
-     * 这里先取一个适中的配置，后续可按业务语料继续调优。
-     */
-    private static final int CHUNK_SIZE = 800;
-    private static final int MIN_CHUNK_SIZE_CHARS = 350;
-    private static final int MIN_CHUNK_LENGTH_TO_EMBED = 10;
+    private static final int MIN_CHUNK_LENGTH_TO_EMBED = 20;
     private static final int MAX_NUM_CHUNKS = 10_000;
-    private static final int OVERLAP_CHARS = 120;
-    private static final int TOP_K = 3;
+    private static final Pattern HEADING_PATTERN = Pattern.compile(
+        "^(第[一二三四五六七八九十百零〇0-9]+[编章节条款].*|[一二三四五六七八九十百]+、.*|[0-9]+[.、].*)$");
 
     private final VectorStore vectorStore;
-    private final ChatClient chatClient;
     private final AliOssService aliOssService;
+    private final MeterRegistry meterRegistry;
+    private final RagProperties properties;
 
-    public RagService(VectorStore vectorStore, ChatClient.Builder chatClientBuilder, AliOssService aliOssService)
+    public RagService(VectorStore vectorStore, AliOssService aliOssService, MeterRegistry meterRegistry,
+        RagProperties properties)
     {
         this.vectorStore = vectorStore;
-        this.chatClient = chatClientBuilder.build();
         this.aliOssService = aliOssService;
+        this.meterRegistry = meterRegistry;
+        this.properties = properties;
     }
 
-    /**
-     * 从 OSS URL 读取文档并写入向量库
-     *
-     * @param fileUrl OSS 文件访问 URL
-     */
-    public void importOssFileToVectorStore(String fileUrl)
+    public void importOssFileToVectorStore(KnowledgeDoc knowledgeDoc)
     {
-        String fileName = extractFileName(fileUrl);
-        try (InputStream inputStream = aliOssService.getObjectInputStreamByUrl(fileUrl))
+        validateDocument(knowledgeDoc);
+        try (InputStream inputStream = aliOssService.getObjectInputStreamByUrl(knowledgeDoc.getFileUrl()))
         {
-            importInputStreamToVectorStore(inputStream, fileName, fileUrl);
-        }
-        catch (Exception e)
-        {
-            throw new RuntimeException("导入 OSS 文档到向量库失败: " + fileUrl, e);
-        }
-    }
-
-    /**
-     * 从本地 / 任意输入流读取文档并写入向量库
-     *
-     * @param inputStream 输入流
-     * @param fileName 文件名
-     */
-    public void importInputStreamToVectorStore(InputStream inputStream, String fileName)
-    {
-        importInputStreamToVectorStore(inputStream, fileName, null);
-    }
-
-    public void importInputStreamToVectorStore(InputStream inputStream, String fileName, String fileUrl)
-    {
-        if (inputStream == null)
-        {
-            throw new IllegalArgumentException("inputStream 不能为空");
-        }
-        if (fileName == null || fileName.isBlank())
-        {
-            throw new IllegalArgumentException("fileName 不能为空");
-        }
-
-        try (InputStream source = inputStream)
-        {
-            InputStreamResource resource = new InputStreamResource(source);
-
-            // 1. 使用 Tika 解析 PDF / Word / TXT / HTML 等文本内容
-            TikaDocumentReader reader = new TikaDocumentReader(resource);
-            List<Document> rawDocuments = reader.get();
-            if (rawDocuments == null || rawDocuments.isEmpty())
+            List<Document> chunks = parseAndChunk(inputStream, knowledgeDoc);
+            if (chunks.isEmpty())
             {
-                log.warn("Tika 未解析出有效文本，fileName={}", fileName);
-                return;
+                throw new IllegalStateException("文档没有可入库的文本内容");
             }
-
-            // 2. 使用 TokenTextSplitter 做基础切片
-            TokenTextSplitter splitter = TokenTextSplitter.builder()
-                .withChunkSize(CHUNK_SIZE)
-                .withMinChunkSizeChars(MIN_CHUNK_SIZE_CHARS)
-                .withMinChunkLengthToEmbed(MIN_CHUNK_LENGTH_TO_EMBED)
-                .withMaxNumChunks(MAX_NUM_CHUNKS)
-                .withKeepSeparator(true)
-                .build();
-            List<Document> chunkedDocuments = splitter.apply(rawDocuments);
-            if (chunkedDocuments == null || chunkedDocuments.isEmpty())
-            {
-                log.warn("文档切片结果为空，fileName={}", fileName);
-                return;
-            }
-
-            // 3. 手动追加 overlap，增强跨段语义连续性
-            List<Document> enrichedDocuments = applyOverlapAndMetadata(chunkedDocuments, fileName, fileUrl);
-
-            // 4. 写入 Redis 向量库
-            vectorStore.accept(enrichedDocuments);
-            log.info("文档已向量化并写入 Redis 向量库，fileName={}, chunks={}", fileName, enrichedDocuments.size());
+            vectorStore.accept(chunks);
+            log.info("Knowledge document indexed, docId={}, chunks={}", knowledgeDoc.getDocId(), chunks.size());
         }
-        catch (Exception e)
+        catch (Exception ex)
         {
-            throw new RuntimeException("导入文档到向量库失败: " + fileName, e);
+            throw new RuntimeException("文档向量化失败, docId=" + knowledgeDoc.getDocId(), ex);
         }
     }
 
-    /**
-     * 示例：聊天前先检索相关片段，再把片段作为 System Prompt 喂给模型。
-     *
-     * @param query 用户问题
-     * @return 最终回答
-     */
-    public String answerWithRag(String query)
+    public void replaceDocument(KnowledgeDoc knowledgeDoc)
     {
-        List<Document> retrievedDocuments = retrieveRelevantDocuments(query);
-        String systemPrompt = buildSystemPrompt(retrievedDocuments);
-
-        return chatClient.prompt()
-            .system(systemPrompt)
-            .user(query)
-            .call()
-            .content();
+        deleteByDocumentId(knowledgeDoc.getDocId());
+        importOssFileToVectorStore(knowledgeDoc);
     }
 
-    /**
-     * 流式版本示例：适合 SSE 对话接口直接复用。
-     *
-     * @param query 用户问题
-     * @return 流式文本片段
-     */
-    public Flux<String> streamAnswerWithRag(String query)
-    {
-        List<Document> retrievedDocuments = retrieveRelevantDocuments(query);
-        String systemPrompt = buildSystemPrompt(retrievedDocuments);
-
-        return chatClient.prompt()
-            .system(systemPrompt)
-            .user(query)
-            .stream()
-            .content();
-    }
-
-    /**
-     * 向量检索示例：先做相似度搜索，再把召回结果拼接成系统提示词。
-     *
-     * @param query 用户问题
-     * @return Top-K 相关片段
-     */
     public List<Document> retrieveRelevantDocuments(String query)
     {
-        SearchRequest searchRequest = SearchRequest.builder()
+        return retrieveRelevantDocuments(query, properties.getTopK());
+    }
+
+    public List<Document> retrieveRelevantDocuments(String query, int topK)
+    {
+        if (query == null || query.isBlank())
+        {
+            return List.of();
+        }
+        SearchRequest request = SearchRequest.builder()
             .query(query)
-            .topK(TOP_K)
-            .similarityThreshold(0.6d)
+            .topK(Math.max(1, Math.min(topK, 20)))
+            .similarityThreshold(properties.getSimilarityThreshold())
             .build();
-        return vectorStore.similaritySearch(searchRequest);
+        List<Document> documents = Timer.builder("campus.ai.rag.retrieval")
+            .description("RAG vector retrieval latency")
+            .register(meterRegistry)
+            .record(() -> vectorStore.similaritySearch(request));
+        return documents == null ? List.of() : documents;
     }
 
-    /**
-     * 根据 fileUrl 删除该文档对应的全部向量切片。
-     *
-     * @param fileUrl OSS 文件 URL
-     */
-    public void deleteByFileUrl(String fileUrl)
+    public void deleteByDocumentId(Long docId)
     {
-        if (fileUrl == null || fileUrl.isBlank())
+        if (docId == null)
         {
-            throw new IllegalArgumentException("fileUrl 不能为空");
+            throw new IllegalArgumentException("docId 不能为空");
         }
-
-        String fileName = extractFileName(fileUrl);
-        FilterExpressionBuilder filterBuilder = new FilterExpressionBuilder();
-        log.info("Deleting vector chunks, fileUrl={}, fileName={}, strategy=fileUrl-first", fileUrl, fileName);
-
-        try
-        {
-            vectorStore.delete(filterBuilder.eq("fileUrl", fileUrl).build());
-            log.info("Vector delete completed by fileUrl metadata, fileUrl={}", fileUrl);
-        }
-        catch (Exception fileUrlDeleteEx)
-        {
-            log.warn("Vector delete by fileUrl metadata failed, fileUrl={}, reason={}, fallback=source/fileName",
-                fileUrl, fileUrlDeleteEx.getMessage());
-            try
-            {
-                vectorStore.delete(filterBuilder.eq("source", fileName).build());
-                log.warn(
-                    "Vector delete fallback by source/fileName succeeded, fileName={}, may affect same-name documents without fileUrl metadata",
-                    fileName);
-            }
-            catch (Exception sourceDeleteEx)
-            {
-                throw new RuntimeException("删除向量数据失败: fileUrl=" + fileUrl + ", fileName=" + fileName,
-                    sourceDeleteEx);
-            }
-        }
+        FilterExpressionBuilder filter = new FilterExpressionBuilder();
+        vectorStore.delete(filter.eq("docId", docId).build());
+        log.info("Vector chunks deleted, docId={}", docId);
     }
 
-    private List<Document> applyOverlapAndMetadata(List<Document> chunkedDocuments, String fileName, String fileUrl)
+    public List<RagSource> toSources(List<Document> documents)
     {
-        List<Document> result = new ArrayList<>(chunkedDocuments.size());
-        String previousChunkText = "";
-
-        for (int i = 0; i < chunkedDocuments.size(); i++)
+        if (documents == null)
         {
-            Document current = chunkedDocuments.get(i);
-            String currentText = current.getText() == null ? "" : current.getText();
-
-            if (currentText.isBlank())
-            {
-                continue;
-            }
-
-            String overlappedText = currentText;
-            if (!previousChunkText.isBlank())
-            {
-                int start = Math.max(0, previousChunkText.length() - OVERLAP_CHARS);
-                String overlap = previousChunkText.substring(start);
-                overlappedText = overlap + System.lineSeparator() + currentText;
-            }
-
-            Map<String, Object> metadata = new HashMap<>(current.getMetadata());
-            metadata.put("fileName", fileName);
-            metadata.put("source", fileName);
-            if (fileUrl != null && !fileUrl.isBlank())
-            {
-                metadata.put("fileUrl", fileUrl);
-            }
-            metadata.put("chunkIndex", i);
-            metadata.put("chunkSize", currentText.length());
-
-            result.add(new Document(overlappedText, metadata));
-            previousChunkText = currentText;
+            return List.of();
         }
-
-        return result;
+        return documents.stream().map(document -> new RagSource(
+            longMetadata(document, "docId"),
+            stringMetadata(document, "fileName"),
+            stringMetadata(document, "section"),
+            intMetadata(document, "chunkIndex"),
+            stringMetadata(document, "sourceUrl"),
+            document.getScore()
+        )).toList();
     }
 
     public String buildSystemPrompt(List<Document> retrievedDocuments)
@@ -276,33 +128,161 @@ public class RagService
         if (retrievedDocuments == null || retrievedDocuments.isEmpty())
         {
             return """
-                你是校园智能助手。
-                当前未检索到可用知识片段，请仅在有把握时回答；
-                如果缺少依据，请明确说明“当前知识库中没有检索到足够信息”。
+                你是校园智能助手。当前没有检索到足够的校园知识依据。
+                请明确回答“当前知识库中没有检索到足够信息”，不要编造制度内容。
                 """;
         }
-
-        String context = retrievedDocuments.stream()
-            .map(document -> {
-                Object fileName = document.getMetadata().getOrDefault("fileName", "unknown");
-                Object chunkIndex = document.getMetadata().getOrDefault("chunkIndex", -1);
-                return "[来源文件=" + fileName + ", chunk=" + chunkIndex + "]\n" + document.getText();
-            })
-            .collect(Collectors.joining("\n\n--------------------\n\n"));
+        String context = retrievedDocuments.stream().map(document -> {
+            Map<String, Object> metadata = document.getMetadata();
+            return "[docId=" + metadata.get("docId") + ", 文件=" + metadata.get("fileName")
+                + ", 章节=" + metadata.get("section") + ", chunk=" + metadata.get("chunkIndex") + "]\n"
+                + document.getText();
+        }).collect(Collectors.joining("\n\n--------------------\n\n"));
 
         return """
-            你是校园智能助手，请优先依据下面检索到的知识片段回答用户问题。
-            如果知识片段已经足够支撑答案，请直接给出简洁、准确、结构化的回复。
-            如果知识片段不足以支撑结论，请明确说明“不确定”或“知识库信息不足”，不要编造事实。
+            你是校园智能助手。请只依据下面检索到的校园知识片段回答。
+            片段不足时明确说明知识库信息不足，不要编造事实。
+            回答正文不要伪造来源编号；来源由系统另行以结构化数据返回。
 
-            已检索到的知识片段如下：
+            检索片段：
             %s
             """.formatted(context);
     }
 
-    private String extractFileName(String fileUrl)
+    private List<Document> parseAndChunk(InputStream inputStream, KnowledgeDoc knowledgeDoc)
     {
-        int index = fileUrl.lastIndexOf('/');
-        return index >= 0 ? fileUrl.substring(index + 1) : fileUrl;
+        TikaDocumentReader reader = new TikaDocumentReader(new InputStreamResource(inputStream));
+        List<Document> rawDocuments = reader.get();
+        if (rawDocuments == null || rawDocuments.isEmpty())
+        {
+            return List.of();
+        }
+
+        List<SectionBlock> sections = new ArrayList<>();
+        for (Document rawDocument : rawDocuments)
+        {
+            sections.addAll(splitSections(rawDocument.getText()));
+        }
+
+        TokenTextSplitter tokenSplitter = TokenTextSplitter.builder()
+            .withChunkSize(properties.getChunkSize())
+            .withMinChunkSizeChars(properties.getMinChunkSizeChars())
+            .withMinChunkLengthToEmbed(MIN_CHUNK_LENGTH_TO_EMBED)
+            .withMaxNumChunks(MAX_NUM_CHUNKS)
+            .withKeepSeparator(true)
+            .build();
+
+        List<ChunkDraft> drafts = new ArrayList<>();
+        for (SectionBlock section : sections)
+        {
+            List<Document> split = tokenSplitter.apply(List.of(new Document(section.text())));
+            for (Document document : split)
+            {
+                if (document.getText() != null && !document.getText().isBlank())
+                {
+                    drafts.add(new ChunkDraft(section.title(), document.getText().trim()));
+                }
+            }
+        }
+
+        List<Document> result = new ArrayList<>(drafts.size());
+        String previousText = "";
+        String previousSection = "";
+        String documentUpdatedAt = knowledgeDoc.getUpdateTime() == null
+            ? Instant.now().toString() : knowledgeDoc.getUpdateTime().toInstant().toString();
+        for (int index = 0; index < drafts.size(); index++)
+        {
+            ChunkDraft draft = drafts.get(index);
+            String text = draft.text();
+            if (!previousText.isBlank() && draft.section().equals(previousSection))
+            {
+                int overlapStart = Math.max(0, previousText.length() - properties.getOverlapChars());
+                text = previousText.substring(overlapStart) + System.lineSeparator() + text;
+            }
+            Map<String, Object> metadata = new LinkedHashMap<>();
+            metadata.put("docId", knowledgeDoc.getDocId());
+            metadata.put("fileName", knowledgeDoc.getDocName());
+            metadata.put("sourceUrl", knowledgeDoc.getFileUrl());
+            metadata.put("source", knowledgeDoc.getFileUrl());
+            metadata.put("documentType", knowledgeDoc.getDocumentType());
+            metadata.put("section", draft.section());
+            metadata.put("chunkIndex", index);
+            metadata.put("updatedAt", documentUpdatedAt);
+            metadata.put("contentHash", knowledgeDoc.getContentHash());
+            String chunkId = UUID.nameUUIDFromBytes(
+                (knowledgeDoc.getDocId() + ":" + knowledgeDoc.getContentHash() + ":" + index)
+                    .getBytes(StandardCharsets.UTF_8)).toString();
+            result.add(new Document(chunkId, text, metadata));
+            previousText = draft.text();
+            previousSection = draft.section();
+        }
+        return result;
+    }
+
+    private List<SectionBlock> splitSections(String text)
+    {
+        if (text == null || text.isBlank())
+        {
+            return List.of();
+        }
+        String normalized = text.replace("\r\n", "\n").replace('\r', '\n');
+        String[] paragraphs = normalized.split("\\n\\s*\\n|(?m)(?=^第[一二三四五六七八九十百零〇0-9]+[编章节条款])");
+        List<SectionBlock> sections = new ArrayList<>();
+        String currentTitle = "正文";
+        for (String paragraph : paragraphs)
+        {
+            String trimmed = paragraph.trim();
+            if (trimmed.isEmpty())
+            {
+                continue;
+            }
+            String firstLine = trimmed.lines().findFirst().orElse("").trim();
+            if (firstLine.length() <= 80 && HEADING_PATTERN.matcher(firstLine).matches())
+            {
+                currentTitle = firstLine;
+            }
+            sections.add(new SectionBlock(currentTitle, trimmed));
+        }
+        return sections;
+    }
+
+    private void validateDocument(KnowledgeDoc document)
+    {
+        if (document == null || document.getDocId() == null || document.getFileUrl() == null
+            || document.getContentHash() == null)
+        {
+            throw new IllegalArgumentException("文档 docId、fileUrl、contentHash 不能为空");
+        }
+    }
+
+    private String stringMetadata(Document document, String key)
+    {
+        Object value = document.getMetadata().get(key);
+        return value == null ? null : value.toString();
+    }
+
+    private Long longMetadata(Document document, String key)
+    {
+        Object value = document.getMetadata().get(key);
+        return value instanceof Number number ? number.longValue() : value == null ? null : Long.valueOf(value.toString());
+    }
+
+    private Integer intMetadata(Document document, String key)
+    {
+        Object value = document.getMetadata().get(key);
+        return value instanceof Number number ? number.intValue() : value == null ? null : Integer.valueOf(value.toString());
+    }
+
+    private record SectionBlock(String title, String text)
+    {
+    }
+
+    private record ChunkDraft(String section, String text)
+    {
+    }
+
+    public record RagSource(Long docId, String fileName, String section, Integer chunkIndex, String sourceUrl,
+                            Double score)
+    {
     }
 }
