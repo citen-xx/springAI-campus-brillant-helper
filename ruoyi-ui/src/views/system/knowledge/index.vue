@@ -25,16 +25,6 @@
     <el-row :gutter="10" class="mb8">
       <el-col :span="1.5">
         <el-button
-          type="primary"
-          plain
-          icon="el-icon-plus"
-          size="mini"
-          @click="handleAdd"
-          v-hasPermi="['system:knowledge:add']"
-        >新增</el-button>
-      </el-col>
-      <el-col :span="1.5">
-        <el-button
           type="success"
           plain
           icon="el-icon-edit"
@@ -124,8 +114,22 @@
         <el-form-item label="文档名称" prop="docName">
           <el-input v-model="form.docName" placeholder="请输入文档名称" />
         </el-form-item>
-        <el-form-item label="文件路径" prop="fileUrl">
-          <el-input v-model="form.fileUrl" placeholder="请输入 OSS 文件 URL" />
+        <el-form-item label="当前文件">
+          <el-input v-model="form.fileUrl" disabled />
+        </el-form-item>
+        <el-form-item label="替换文件" required>
+          <el-upload
+            action="#"
+            :auto-upload="false"
+            :limit="1"
+            :on-change="handleReplacementChange"
+            :on-remove="handleReplacementRemove"
+            :file-list="replacementFileList"
+            :http-request="dummyRequest"
+          >
+            <el-button slot="trigger" size="small" type="primary">选择新文件</el-button>
+            <div slot="tip" class="el-upload__tip">替换后将删除旧向量并重新解析、切片和入库</div>
+          </el-upload>
         </el-form-item>
         <el-form-item label="备注说明" prop="remark">
           <el-input v-model="form.remark" type="textarea" :rows="3" placeholder="请输入备注" />
@@ -174,9 +178,8 @@ import {
   listKnowledge,
   getKnowledge,
   delKnowledge,
-  addKnowledge,
-  updateKnowledge,
-  importKnowledgeFile
+  importKnowledgeFile,
+  replaceKnowledgeFile
 } from '@/api/system/knowledge'
 
 export default {
@@ -208,12 +211,11 @@ export default {
       },
       fileList: [],
       uploadFile: null,
+      replacementFileList: [],
+      replacementFile: null,
       rules: {
         docName: [
           { required: true, message: '文档名称不能为空', trigger: 'blur' }
-        ],
-        fileUrl: [
-          { required: true, message: '文件路径不能为空', trigger: 'blur' }
         ]
       }
     }
@@ -273,16 +275,13 @@ export default {
       this.single = selection.length !== 1
       this.multiple = !selection.length
     },
-    handleAdd() {
-      this.reset()
-      this.open = true
-      this.title = '新增知识文档'
-    },
     handleUpdate(row) {
       this.reset()
       const docId = row.docId || this.ids
       getKnowledge(docId).then(response => {
         this.form = response.data
+        this.replacementFile = null
+        this.replacementFileList = []
         this.open = true
         this.title = '修改知识文档'
       })
@@ -292,18 +291,20 @@ export default {
         if (!valid) {
           return
         }
-        if (this.form.docId != null) {
-          updateKnowledge(this.form).then(() => {
-            this.$modal.msgSuccess('修改成功')
+        if (this.form.docId != null && this.replacementFile) {
+          const formData = new FormData()
+          formData.append('file', this.replacementFile)
+          formData.append('docName', this.form.docName || '')
+          formData.append('remark', this.form.remark || '')
+          replaceKnowledgeFile(this.form.docId, formData).then(() => {
+            this.$modal.msgSuccess('修改并重建向量成功')
             this.open = false
             this.getList()
           })
+        } else if (!this.form.docId) {
+          this.$modal.msgWarning('新增文档请使用“导入文件并向量化”')
         } else {
-          addKnowledge(this.form).then(() => {
-            this.$modal.msgSuccess('新增成功')
-            this.open = false
-            this.getList()
-          })
+          this.$modal.msgWarning('请选择替换文件，避免只修改数据库记录')
         }
       })
     },
@@ -335,6 +336,14 @@ export default {
     handleFileRemove() {
       this.uploadFile = null
       this.fileList = []
+    },
+    handleReplacementChange(file, fileList) {
+      this.replacementFileList = fileList.slice(-1)
+      this.replacementFile = file.raw
+    },
+    handleReplacementRemove() {
+      this.replacementFile = null
+      this.replacementFileList = []
     },
     cancelImport() {
       this.importOpen = false

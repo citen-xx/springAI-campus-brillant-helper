@@ -17,24 +17,6 @@ export function getKnowledge(docId) {
   })
 }
 
-// 新增校园知识库文档
-export function addKnowledge(data) {
-  return request({
-    url: '/system/knowledge',
-    method: 'post',
-    data: data
-  })
-}
-
-// 修改校园知识库文档
-export function updateKnowledge(data) {
-  return request({
-    url: '/system/knowledge',
-    method: 'put',
-    data: data
-  })
-}
-
 // 删除校园知识库文档
 export function delKnowledge(docId) {
   return request({
@@ -48,6 +30,17 @@ export function importKnowledgeFile(data) {
   return request({
     url: '/system/knowledge/import-file',
     method: 'post',
+    data,
+    headers: {
+      'Content-Type': 'multipart/form-data'
+    }
+  })
+}
+
+export function replaceKnowledgeFile(docId, data) {
+  return request({
+    url: `/system/knowledge/${docId}/file`,
+    method: 'put',
     data,
     headers: {
       'Content-Type': 'multipart/form-data'
