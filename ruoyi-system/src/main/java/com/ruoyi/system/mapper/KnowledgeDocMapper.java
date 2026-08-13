@@ -19,6 +19,8 @@ public interface KnowledgeDocMapper
      */
     public KnowledgeDoc selectKnowledgeDocByDocId(Long docId);
 
+    public KnowledgeDoc selectKnowledgeDocByContentHash(String contentHash);
+
     /**
      * 查询校园知识库文档列表
      * 

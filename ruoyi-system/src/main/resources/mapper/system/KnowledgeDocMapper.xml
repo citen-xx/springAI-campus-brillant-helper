@@ -8,6 +8,8 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         <result property="docId"    column="doc_id"    />
         <result property="docName"    column="doc_name"    />
         <result property="fileUrl"    column="file_url"    />
+        <result property="contentHash" column="content_hash" />
+        <result property="documentType" column="document_type" />
         <result property="status"    column="status"    />
         <result property="createBy"    column="create_by"    />
         <result property="createTime"    column="create_time"    />
@@ -17,7 +19,9 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     </resultMap>
 
     <sql id="selectKnowledgeDocVo">
-        select doc_id, doc_name, file_url, status, create_by, create_time, update_by, update_time, remark from knowledge_doc
+        select doc_id, doc_name, file_url, content_hash, document_type, status,
+               create_by, create_time, update_by, update_time, remark
+        from knowledge_doc
     </sql>
 
     <select id="selectKnowledgeDocList" parameterType="KnowledgeDoc" resultMap="KnowledgeDocResult">
@@ -34,11 +38,19 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         where doc_id = #{docId}
     </select>
 
+    <select id="selectKnowledgeDocByContentHash" parameterType="String" resultMap="KnowledgeDocResult">
+        <include refid="selectKnowledgeDocVo"/>
+        where content_hash = #{contentHash}
+        limit 1
+    </select>
+
     <insert id="insertKnowledgeDoc" parameterType="KnowledgeDoc" useGeneratedKeys="true" keyProperty="docId">
         insert into knowledge_doc
         <trim prefix="(" suffix=")" suffixOverrides=",">
             <if test="docName != null and docName != ''">doc_name,</if>
             <if test="fileUrl != null">file_url,</if>
+            <if test="contentHash != null">content_hash,</if>
+            <if test="documentType != null">document_type,</if>
             <if test="status != null">status,</if>
             <if test="createBy != null">create_by,</if>
             <if test="createTime != null">create_time,</if>
@@ -49,6 +61,8 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         <trim prefix="values (" suffix=")" suffixOverrides=",">
             <if test="docName != null and docName != ''">#{docName},</if>
             <if test="fileUrl != null">#{fileUrl},</if>
+            <if test="contentHash != null">#{contentHash},</if>
+            <if test="documentType != null">#{documentType},</if>
             <if test="status != null">#{status},</if>
             <if test="createBy != null">#{createBy},</if>
             <if test="createTime != null">#{createTime},</if>
@@ -63,6 +77,8 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         <trim prefix="SET" suffixOverrides=",">
             <if test="docName != null and docName != ''">doc_name = #{docName},</if>
             <if test="fileUrl != null">file_url = #{fileUrl},</if>
+            <if test="contentHash != null">content_hash = #{contentHash},</if>
+            <if test="documentType != null">document_type = #{documentType},</if>
             <if test="status != null">status = #{status},</if>
             <if test="createBy != null">create_by = #{createBy},</if>
             <if test="createTime != null">create_time = #{createTime},</if>
