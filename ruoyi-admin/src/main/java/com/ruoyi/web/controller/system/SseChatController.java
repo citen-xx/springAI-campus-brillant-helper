@@ -1,13 +1,16 @@
 package com.ruoyi.web.controller.system;
 
-import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
@@ -16,18 +19,24 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ruoyi.common.annotation.Anonymous;
 import com.ruoyi.common.annotation.RateLimiter;
 import com.ruoyi.common.constant.HttpStatus;
-import com.ruoyi.common.core.redis.RedisCache;
 import com.ruoyi.common.enums.LimitType;
 import com.ruoyi.common.exception.ServiceException;
 import com.ruoyi.common.utils.SecurityUtils;
 import com.ruoyi.common.utils.StringUtils;
 import com.ruoyi.web.config.CardBalanceRequest;
 import com.ruoyi.web.config.StudentScoreRequest;
-import com.ruoyi.system.domain.Student;
 import com.ruoyi.system.service.CurrentStudentService;
+import com.ruoyi.system.service.ChatIntentRouter;
+import com.ruoyi.system.service.ChatIntentRouter.ChatIntent;
+import com.ruoyi.system.service.ChatIntentRouter.RouteDecision;
 import com.ruoyi.system.service.RagService;
+import com.ruoyi.web.service.ChatSessionScopeService;
+import com.ruoyi.web.service.ChatSessionScopeService.ChatChannel;
 import com.ruoyi.web.service.RedisChatMemory;
-import jakarta.annotation.PostConstruct;
+import com.ruoyi.web.service.PublicKnowledgeCacheService;
+import com.ruoyi.web.service.PublicKnowledgeCacheService.CachedPublicAnswer;
+import com.ruoyi.web.service.PythonPublicRagClient;
+import com.ruoyi.web.service.SseStreamLifecycle;
 import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
@@ -35,20 +44,21 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.ToolContext;
 import org.springframework.ai.document.Document;
-import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
-import reactor.core.Disposable;
-import reactor.core.publisher.Flux;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Timer;
+import com.ruoyi.web.service.PythonPublicRagClient.HistoryMessage;
 
 @RestController
 @RequestMapping("/api/ai/chat")
@@ -65,56 +75,40 @@ public class SseChatController
     @Resource(name = "getCardBalance")
     private BiFunction<CardBalanceRequest, ToolContext, Map<String, Object>> getCardBalanceTool;
 
-    private final RedisCache redisCache;
-    private final StringRedisTemplate stringRedisTemplate;
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
     private final ChatMemory chatMemory;
     private final MessageChatMemoryAdvisor chatMemoryAdvisor;
     private final RagService ragService;
     private final CurrentStudentService currentStudentService;
+    private final ChatSessionScopeService chatSessionScopeService;
+    private final ChatIntentRouter chatIntentRouter;
+    private final PublicKnowledgeCacheService publicKnowledgeCacheService;
+    private final PythonPublicRagClient pythonPublicRagClient;
+    private final MeterRegistry meterRegistry;
 
-    private DefaultRedisScript<Long> limitScript;
-
-    public SseChatController(RedisCache redisCache, StringRedisTemplate stringRedisTemplate,
-        ChatClient.Builder chatClientBuilder, RedisChatMemory redisChatMemory, RagService ragService,
-        ObjectMapper objectMapper, CurrentStudentService currentStudentService)
+    public SseChatController(ChatClient.Builder chatClientBuilder, RedisChatMemory redisChatMemory,
+        RagService ragService, ObjectMapper objectMapper, CurrentStudentService currentStudentService,
+        ChatSessionScopeService chatSessionScopeService, ChatIntentRouter chatIntentRouter,
+        PublicKnowledgeCacheService publicKnowledgeCacheService, PythonPublicRagClient pythonPublicRagClient,
+        MeterRegistry meterRegistry)
     {
-        this.redisCache = redisCache;
-        this.stringRedisTemplate = stringRedisTemplate;
         this.objectMapper = objectMapper;
         this.chatMemory = redisChatMemory;
         this.chatMemoryAdvisor = MessageChatMemoryAdvisor.builder(chatMemory).build();
         this.chatClient = chatClientBuilder.build();
         this.ragService = ragService;
         this.currentStudentService = currentStudentService;
-    }
-
-    @PostConstruct
-    public void init()
-    {
-        limitScript = new DefaultRedisScript<>();
-        limitScript.setResultType(Long.class);
-        limitScript.setScriptText(
-            "local key = KEYS[1]\n" +
-            "local window_size = tonumber(ARGV[1])\n" +
-            "local max_requests = tonumber(ARGV[2])\n" +
-            "local current_time = tonumber(ARGV[3])\n" +
-            "local window_start = current_time - window_size\n" +
-            "redis.call('ZREMRANGEBYSCORE', key, '-inf', window_start)\n" +
-            "local current_requests = redis.call('ZCARD', key)\n" +
-            "if current_requests < max_requests then\n" +
-            "    redis.call('ZADD', key, current_time, current_time)\n" +
-            "    redis.call('PEXPIRE', key, window_size)\n" +
-            "    return 1\n" +
-            "else\n" +
-            "    return 0\n" +
-            "end"
-        );
+        this.chatSessionScopeService = chatSessionScopeService;
+        this.chatIntentRouter = chatIntentRouter;
+        this.publicKnowledgeCacheService = publicKnowledgeCacheService;
+        this.pythonPublicRagClient = pythonPublicRagClient;
+        this.meterRegistry = meterRegistry;
     }
 
     @Anonymous
-    @RateLimiter(time = 60, count = 9999999, limitType = LimitType.USER_ID, message = "大模型额度已耗尽，请稍后再试")
+    @RateLimiter(key = "ai:public:", time = 60, count = 10, limitType = LimitType.USER_ID,
+        message = "公共问答请求过于频繁，请稍后再试")
     @RequestMapping(value = { "/stream", "/public/stream" }, method = { RequestMethod.GET, RequestMethod.POST },
         produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter publicStreamChat(@RequestBody(required = false) Map<String, Object> body,
@@ -126,8 +120,8 @@ public class SseChatController
         return streamChatInternal(body, prompt, message, conversationIdParam, request, false, Collections.emptyMap());
     }
 
-    @Anonymous
-    @RateLimiter(time = 60, count = 9999999, limitType = LimitType.USER_ID, message = "大模型额度已耗尽，请稍后再试")
+    @RateLimiter(key = "ai:student:", time = 60, count = 20, limitType = LimitType.USER_ID,
+        message = "个人问答请求过于频繁，请稍后再试")
     @RequestMapping(value = "/student/stream", method = { RequestMethod.GET, RequestMethod.POST },
         produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter studentStreamChat(@RequestBody(required = false) Map<String, Object> body,
@@ -137,10 +131,25 @@ public class SseChatController
         HttpServletRequest request)
     {
         ensureStudentAccess();
-        Student currentStudent = currentStudentService.requireCurrentStudent();
         Map<String, Object> toolContext = currentStudentService.buildToolContext();
-        log.debug("Student chat authorized, studentId={}", currentStudent.getStudentId());
+        log.debug("Student chat authorized");
         return streamChatInternal(body, prompt, message, conversationIdParam, request, true, toolContext);
+    }
+
+    @Anonymous
+    @DeleteMapping("/public/conversations/{conversationId}")
+    public void clearPublicConversation(@org.springframework.web.bind.annotation.PathVariable String conversationId,
+        HttpServletRequest request)
+    {
+        chatMemory.clear(chatSessionScopeService.scopedConversationId(conversationId, ChatChannel.PUBLIC, request));
+    }
+
+    @DeleteMapping("/student/conversations/{conversationId}")
+    public void clearStudentConversation(@org.springframework.web.bind.annotation.PathVariable String conversationId,
+        HttpServletRequest request)
+    {
+        ensureStudentAccess();
+        chatMemory.clear(chatSessionScopeService.scopedConversationId(conversationId, ChatChannel.STUDENT, request));
     }
 
     private SseEmitter streamChatInternal(Map<String, Object> body, String prompt, String message,
@@ -148,41 +157,43 @@ public class SseChatController
         Map<String, Object> toolContext)
     {
         String userPrompt = resolvePrompt(body, prompt, message);
-        String conversationId = resolveConversationId(body, conversationIdParam, request);
+        long requestStartedNanos = System.nanoTime();
+        String clientConversationId = resolveConversationId(body, conversationIdParam, request);
+        ChatChannel channel = enableStudentTools ? ChatChannel.STUDENT : ChatChannel.PUBLIC;
+        String conversationId = chatSessionScopeService.scopedConversationId(clientConversationId, channel, request);
         SseEmitter emitter = new SseEmitter(60_000L);
-        StreamLifecycle lifecycle = new StreamLifecycle(conversationId, emitter);
+        SseStreamLifecycle lifecycle = new SseStreamLifecycle(conversationId, emitter);
 
         emitter.onTimeout(() -> {
-            log.warn("SSE chat timeout, conversationId={}, prompt={}", conversationId, userPrompt);
+            log.warn("SSE chat timeout, conversationId={}", conversationId);
             lifecycle.close("timeout");
             lifecycle.safeComplete();
         });
         emitter.onCompletion(() -> {
-            log.debug("SSE chat completed callback, conversationId={}, prompt={}", conversationId, userPrompt);
+            log.debug("SSE chat completed callback, conversationId={}", conversationId);
             lifecycle.close("completion callback");
         });
         emitter.onError(throwable -> {
-            log.error("SSE chat error callback, conversationId={}, prompt={}", conversationId, userPrompt, throwable);
+            log.error("SSE chat error callback, conversationId={}", conversationId, throwable);
             lifecycle.close("error callback: " + throwable.getClass().getSimpleName());
         });
 
-        String cacheKey = "ai:qa:" + userPrompt.trim();
-        String cachedAnswer = redisCache.getCacheObject(cacheKey);
-        if (StringUtils.isNotEmpty(cachedAnswer))
+        RouteDecision routeDecision = chatIntentRouter.route(userPrompt, enableStudentTools);
+        if (!enableStudentTools)
         {
-            lifecycle.safeSend(toSse(cachedAnswer));
-            lifecycle.safeComplete();
+            startPublicPythonStream(lifecycle, conversationId, userPrompt, requestStartedNanos);
             return emitter;
         }
-
-        if (enableStudentTools && handleDirectStudentToolCall(lifecycle, conversationId, userPrompt, toolContext))
+        if (enableStudentTools && handleDirectStudentToolCall(lifecycle, conversationId, userPrompt, toolContext,
+            routeDecision))
         {
             return emitter;
         }
 
         List<Document> retrievedDocuments = ragService.retrieveRelevantDocuments(userPrompt);
-        log.info("RAG retrieved {} document chunks, conversationId={}, prompt={}, studentTools={}",
-            retrievedDocuments.size(), conversationId, userPrompt, enableStudentTools);
+        List<com.ruoyi.system.service.RagService.RagSource> sources = ragService.toSources(retrievedDocuments);
+        log.info("RAG retrieved {} document chunks, conversationId={}, studentTools={}",
+            retrievedDocuments.size(), conversationId, enableStudentTools);
         String systemPrompt = appendStudentToolInstructions(ragService.buildSystemPrompt(retrievedDocuments),
             enableStudentTools);
 
@@ -195,13 +206,15 @@ public class SseChatController
 
         if (enableStudentTools)
         {
-            log.info("Student tool chat enabled, conversationId={}, toolContext={}", conversationId, toolContext);
+            log.info("Student tool chat enabled, conversationId={}", conversationId);
             chatRequest = chatRequest
                 .toolContext(toolContext)
                 .functions("getStudentScore", "getCardBalance");
             ChatClient.ChatClientRequestSpec finalChatRequest = chatRequest;
 
             CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
+                long llmCallStartedNanos = System.nanoTime();
+                String outcome = "complete";
                 try
                 {
                     ChatResponse chatResponse = finalChatRequest.call().chatResponse();
@@ -213,54 +226,189 @@ public class SseChatController
                     }
                     if (lifecycle.safeSend(toSse(extractContent(chatResponse))))
                     {
+                        lifecycle.safeSend(toSse("sources", Map.of("sources", sources)));
                         lifecycle.safeComplete();
                     }
                 }
                 catch (Throwable throwable)
                 {
+                    outcome = "error";
                     if (lifecycle.isClosed())
                     {
                         log.info("AI tool call finished after lifecycle closed, conversationId={}", conversationId);
                         return;
                     }
-                    log.error("AI tool call failed, conversationId={}, prompt={}", conversationId, userPrompt, throwable);
+                    log.error("AI tool call failed, conversationId={}", conversationId, throwable);
                     lifecycle.safeCompleteWithError(throwable);
+                }
+                finally
+                {
+                    Timer.builder("campus.ai.llm.call")
+                        .tag("outcome", outcome)
+                        .description("Non-streaming LLM tool-capable call duration")
+                        .register(meterRegistry)
+                        .record(System.nanoTime() - llmCallStartedNanos, TimeUnit.NANOSECONDS);
                 }
             }, taskExecutor);
             lifecycle.setFuture(future);
             return emitter;
         }
-
-        Flux<ChatResponse> flux = chatRequest.stream().chatResponse();
-
-        AtomicReference<String> previousText = new AtomicReference<>("");
-        Disposable disposable = flux
-            .map(chatResponse -> {
-                String currentText = extractContent(chatResponse);
-                String previous = previousText.getAndSet(currentText);
-                String delta = currentText;
-                if (StringUtils.isNotEmpty(previous) && currentText.startsWith(previous))
-                {
-                    delta = currentText.substring(previous.length());
-                }
-                return toSse(delta);
-            })
-            .subscribe(
-                lifecycle::safeSend,
-                throwable -> {
-                    if (lifecycle.isClosed())
-                    {
-                        log.info("AI stream terminated after lifecycle closed, conversationId={}", conversationId);
-                        return;
-                    }
-                    log.error("AI stream failed, conversationId={}, prompt={}", conversationId, userPrompt, throwable);
-                    lifecycle.safeCompleteWithError(throwable);
-                },
-                lifecycle::safeComplete
-            );
-        lifecycle.setDisposable(disposable);
-
         return emitter;
+    }
+
+    private void startPublicPythonStream(SseStreamLifecycle lifecycle, String conversationId, String userPrompt,
+        long requestStartedNanos)
+    {
+        List<org.springframework.ai.chat.messages.Message> history = chatMemory.get(conversationId, 20);
+        boolean cacheEligible = history.isEmpty();
+        if (cacheEligible)
+        {
+            CachedPublicAnswer cached = publicKnowledgeCacheService.get(userPrompt);
+            if (cached != null)
+            {
+                chatMemory.add(conversationId,
+                    List.of(new org.springframework.ai.chat.messages.UserMessage(userPrompt),
+                        new AssistantMessage(cached.answer())));
+                if (lifecycle.safeSend(toSse("answer", Map.of("answer", cached.answer())))
+                    && lifecycle.safeSend(toSse("sources", Map.of("sources", cached.sources()))))
+                {
+                    recordPublicChatComplete(requestStartedNanos);
+                    lifecycle.safeComplete();
+                }
+                return;
+            }
+        }
+
+        StringBuilder completeAnswer = new StringBuilder();
+        AtomicReference<List<com.ruoyi.system.service.RagService.RagSource>> sources =
+            new AtomicReference<>(List.of());
+        AtomicBoolean sourcesReceived = new AtomicBoolean(false);
+
+        // Retrieval, first-token, and LLM-stream metrics are owned by Python; align names in migration step 4.
+        CompletableFuture<Void> future = pythonPublicRagClient.stream(userPrompt, toPythonHistory(history))
+            .doOnNext(event -> {
+                if (lifecycle.isClosed())
+                {
+                    return;
+                }
+                String eventType = event.event();
+                if ("answer".equals(eventType))
+                {
+                    String delta = event.answer() == null ? "" : event.answer();
+                    completeAnswer.append(delta);
+                    lifecycle.safeSend(toSse("answer", Map.of("answer", delta)));
+                    return;
+                }
+                if ("sources".equals(eventType))
+                {
+                    List<com.ruoyi.system.service.RagService.RagSource> eventSources = event.sources() == null
+                        ? List.of()
+                        : event.sources().stream().filter(Objects::nonNull).toList();
+                    sources.set(eventSources);
+                    sourcesReceived.set(true);
+                    lifecycle.safeSend(toSse("sources", Map.of("sources", eventSources)));
+                    return;
+                }
+                if ("error".equals(eventType))
+                {
+                    throw new IllegalStateException("Python RAG stream returned an error event");
+                }
+                throw new IllegalStateException("Unknown Python RAG SSE event: " + eventType);
+            })
+            .then()
+            .toFuture();
+        lifecycle.setFuture(future);
+        future.whenComplete((ignored, throwable) -> {
+            if (throwable != null)
+            {
+                handlePublicPythonFailure(lifecycle, conversationId, throwable);
+                return;
+            }
+            if (!sourcesReceived.get())
+            {
+                handlePublicPythonFailure(lifecycle, conversationId,
+                    new IllegalStateException("Python RAG stream completed without sources"));
+                return;
+            }
+            if (lifecycle.isClosed())
+            {
+                return;
+            }
+            try
+            {
+                String answer = completeAnswer.toString();
+                chatMemory.add(conversationId,
+                    List.of(new org.springframework.ai.chat.messages.UserMessage(userPrompt),
+                        new AssistantMessage(answer)));
+                if (cacheEligible)
+                {
+                    publicKnowledgeCacheService.put(userPrompt, answer, sources.get());
+                }
+                recordPublicChatComplete(requestStartedNanos);
+                lifecycle.safeComplete();
+            }
+            catch (Throwable ex)
+            {
+                log.error("Failed to persist public chat response, conversationId={}", conversationId, ex);
+                lifecycle.safeCompleteWithError(ex);
+            }
+        });
+    }
+
+    private List<HistoryMessage> toPythonHistory(List<org.springframework.ai.chat.messages.Message> history)
+    {
+        if (history == null || history.isEmpty())
+        {
+            return List.of();
+        }
+        List<HistoryMessage> result = new ArrayList<>();
+        for (org.springframework.ai.chat.messages.Message message : history)
+        {
+            if (message instanceof org.springframework.ai.chat.messages.UserMessage userMessage)
+            {
+                result.add(new HistoryMessage("user", userMessage.getText()));
+            }
+            else if (message instanceof AssistantMessage assistantMessage)
+            {
+                result.add(new HistoryMessage("assistant", assistantMessage.getText()));
+            }
+            else if (message instanceof org.springframework.ai.chat.messages.SystemMessage systemMessage)
+            {
+                result.add(new HistoryMessage("system", systemMessage.getText()));
+            }
+        }
+        return result;
+    }
+
+    private void handlePublicPythonFailure(SseStreamLifecycle lifecycle, String conversationId, Throwable throwable)
+    {
+        if (lifecycle.isClosed())
+        {
+            log.info("Python public RAG stream ended after lifecycle closed, conversationId={}", conversationId);
+            return;
+        }
+        Throwable cause = unwrapCompletionException(throwable);
+        log.error("Python public RAG stream failed, conversationId={}", conversationId, cause);
+        lifecycle.safeSend(toSse("error", Map.of("message", "Python 服务不可用，请稍后重试")));
+        lifecycle.safeCompleteWithError(cause);
+    }
+
+    private Throwable unwrapCompletionException(Throwable throwable)
+    {
+        Throwable current = throwable;
+        while (current instanceof CompletionException && current.getCause() != null)
+        {
+            current = current.getCause();
+        }
+        return current;
+    }
+
+    private void recordPublicChatComplete(long requestStartedNanos)
+    {
+        Timer.builder("campus.ai.chat.complete")
+            .description("Complete public RAG response latency")
+            .register(meterRegistry)
+            .record(System.nanoTime() - requestStartedNanos, TimeUnit.NANOSECONDS);
     }
 
     private String resolvePrompt(Map<String, Object> body, String prompt, String message)
@@ -341,60 +489,57 @@ public class SseChatController
             """;
     }
 
-    private String resolveForcedToolName(String userPrompt)
+    private boolean handleDirectStudentToolCall(SseStreamLifecycle lifecycle, String conversationId, String userPrompt,
+        Map<String, Object> toolContext, RouteDecision routeDecision)
     {
-        if (StringUtils.isEmpty(userPrompt))
-        {
-            return null;
-        }
-        String prompt = userPrompt.toLowerCase();
-        if (prompt.contains("成绩") || prompt.contains("分数") || prompt.contains("高数")
-            || prompt.contains("高等数学") || prompt.contains("英语") || prompt.contains("java"))
-        {
-            return "getStudentScore";
-        }
-        if (prompt.contains("一卡通") || prompt.contains("校园卡") || prompt.contains("饭卡") || prompt.contains("余额"))
-        {
-            return "getCardBalance";
-        }
-        return null;
-    }
-
-    private boolean handleDirectStudentToolCall(StreamLifecycle lifecycle, String conversationId, String userPrompt,
-        Map<String, Object> toolContext)
-    {
-        String toolName = resolveForcedToolName(userPrompt);
-        if (StringUtils.isEmpty(toolName))
+        if (routeDecision.intent() != ChatIntent.STUDENT_SCORE
+            && routeDecision.intent() != ChatIntent.CARD_BALANCE)
         {
             return false;
         }
+        String toolName = routeDecision.intent() == ChatIntent.STUDENT_SCORE ? "getStudentScore" : "getCardBalance";
         CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
+            long toolStartedNanos = System.nanoTime();
             try
             {
                 Map<String, Object> result;
                 if ("getStudentScore".equals(toolName))
                 {
-                    String subject = resolveScoreSubject(userPrompt);
+                    String subject = routeDecision.subject();
                     if (StringUtils.isEmpty(subject))
                     {
-                        lifecycle.safeCompleteWithError(new ServiceException("未识别到成绩科目"));
+                        String clarification = "请补充要查询的课程，例如高等数学、大学英语或 Java程序设计。";
+                        chatMemory.add(conversationId,
+                            List.of(new org.springframework.ai.chat.messages.UserMessage(userPrompt),
+                                new org.springframework.ai.chat.messages.AssistantMessage(clarification)));
+                        lifecycle.safeSend(toSse(clarification));
+                        lifecycle.safeComplete();
                         return;
                     }
                     result = getStudentScoreTool.apply(new StudentScoreRequest(subject), new ToolContext(toolContext));
                 }
                 else
                 {
-                    result = getCardBalanceTool.apply(new CardBalanceRequest("student-chat"), new ToolContext(toolContext));
+                    result = getCardBalanceTool.apply(new CardBalanceRequest(), new ToolContext(toolContext));
                 }
-                log.info("Student chat direct tool dispatch, conversationId={}, tool={}, result={}", conversationId,
-                    toolName, result);
+                log.info("Student chat direct tool dispatch completed, conversationId={}, tool={}, status={}",
+                    conversationId, toolName, result == null ? null : result.get("status"));
                 if (lifecycle.isClosed())
                 {
                     log.info("Student chat direct tool result dropped because lifecycle already closed, conversationId={}, tool={}",
                         conversationId, toolName);
                     return;
                 }
-                if (lifecycle.safeSend(toSse(renderStudentToolAnswer(toolName, result))))
+                String answer = renderStudentToolAnswer(toolName, result);
+                chatMemory.add(conversationId,
+                    List.of(new org.springframework.ai.chat.messages.UserMessage(userPrompt),
+                        new org.springframework.ai.chat.messages.AssistantMessage(answer)));
+                Timer.builder("campus.ai.tool.query")
+                    .tag("tool", toolName)
+                    .description("Student business tool latency")
+                    .register(meterRegistry)
+                    .record(System.nanoTime() - toolStartedNanos, TimeUnit.NANOSECONDS);
+                if (lifecycle.safeSend(toSse(answer)))
                 {
                     lifecycle.safeComplete();
                 }
@@ -407,46 +552,12 @@ public class SseChatController
                         conversationId, toolName);
                     return;
                 }
-                log.error("Student chat direct tool dispatch failed, conversationId={}, prompt={}", conversationId,
-                    userPrompt, throwable);
+                log.error("Student chat direct tool dispatch failed, conversationId={}", conversationId, throwable);
                 lifecycle.safeCompleteWithError(throwable);
             }
         }, taskExecutor);
         lifecycle.setFuture(future);
         return true;
-    }
-
-    private String resolveScoreSubject(String userPrompt)
-    {
-        if (StringUtils.isEmpty(userPrompt))
-        {
-            return null;
-        }
-        if (userPrompt.contains("高等数学"))
-        {
-            return "高等数学";
-        }
-        if (userPrompt.contains("高数"))
-        {
-            return "高数";
-        }
-        if (userPrompt.contains("大学英语"))
-        {
-            return "大学英语";
-        }
-        if (userPrompt.contains("英语"))
-        {
-            return "英语";
-        }
-        if (userPrompt.contains("Java程序设计"))
-        {
-            return "Java程序设计";
-        }
-        if (userPrompt.toLowerCase().contains("java"))
-        {
-            return "java";
-        }
-        return null;
     }
 
     private String renderStudentToolAnswer(String toolName, Map<String, Object> result)
@@ -501,11 +612,16 @@ public class SseChatController
 
     private String toSse(String answer)
     {
+        return toSse("answer", Map.of("answer", answer));
+    }
+
+    private String toSse(String event, Map<String, ?> data)
+    {
         try
         {
             Map<String, Object> payload = new LinkedHashMap<>();
-            payload.put("event", "message");
-            payload.put("answer", answer);
+            payload.put("event", event);
+            payload.putAll(data);
             return objectMapper.writeValueAsString(payload);
         }
         catch (JsonProcessingException e)
@@ -514,121 +630,4 @@ public class SseChatController
         }
     }
 
-    private final class StreamLifecycle
-    {
-        private final String conversationId;
-        private final SseEmitter emitter;
-        private final AtomicReference<Disposable> disposableRef = new AtomicReference<>();
-        private final AtomicReference<CompletableFuture<?>> futureRef = new AtomicReference<>();
-        private final AtomicBoolean closed = new AtomicBoolean(false);
-        private final AtomicBoolean terminalSignalled = new AtomicBoolean(false);
-
-        private StreamLifecycle(String conversationId, SseEmitter emitter)
-        {
-            this.conversationId = conversationId;
-            this.emitter = emitter;
-        }
-
-        private void setDisposable(Disposable disposable)
-        {
-            disposableRef.set(disposable);
-            if (closed.get() && disposable != null && !disposable.isDisposed())
-            {
-                disposable.dispose();
-                log.info("SSE disposable disposed after late registration, conversationId={}", conversationId);
-            }
-        }
-
-        private void setFuture(CompletableFuture<?> future)
-        {
-            futureRef.set(future);
-            if (closed.get() && future != null && !future.isDone())
-            {
-                boolean cancelled = future.cancel(true);
-                log.info("SSE future cancelled after late registration, conversationId={}, cancelled={}",
-                    conversationId, cancelled);
-            }
-        }
-
-        private boolean isClosed()
-        {
-            return closed.get();
-        }
-
-        private void close(String reason)
-        {
-            if (!closed.compareAndSet(false, true))
-            {
-                log.debug("SSE lifecycle already closed, conversationId={}, reason={}", conversationId, reason);
-                return;
-            }
-            CancellationState state = cancelUpstream(reason);
-            log.info(
-                "SSE lifecycle closed, conversationId={}, reason={}, disposableDisposed={}, futureCancelled={}",
-                conversationId, reason, state.disposableDisposed(), state.futureCancelled());
-        }
-
-        private CancellationState cancelUpstream(String reason)
-        {
-            Disposable disposable = disposableRef.get();
-            boolean disposableDisposed = false;
-            if (disposable != null && !disposable.isDisposed())
-            {
-                disposable.dispose();
-                disposableDisposed = true;
-            }
-
-            CompletableFuture<?> future = futureRef.get();
-            boolean futureCancelled = false;
-            if (future != null && !future.isDone())
-            {
-                futureCancelled = future.cancel(true);
-            }
-
-            log.debug("SSE upstream cancel evaluated, conversationId={}, reason={}, disposablePresent={}, futurePresent={}",
-                conversationId, reason, disposable != null, future != null);
-            return new CancellationState(disposableDisposed, futureCancelled);
-        }
-
-        private boolean safeSend(String data)
-        {
-            if (closed.get())
-            {
-                log.debug("Skip SSE send because lifecycle already closed, conversationId={}", conversationId);
-                return false;
-            }
-            try
-            {
-                emitter.send(SseEmitter.event().data(data));
-                return true;
-            }
-            catch (IOException | IllegalStateException ex)
-            {
-                log.warn("SSE send failed, conversationId={}, reason=client disconnected", conversationId, ex);
-                close("client disconnected");
-                safeComplete();
-                return false;
-            }
-        }
-
-        private void safeComplete()
-        {
-            if (terminalSignalled.compareAndSet(false, true))
-            {
-                emitter.complete();
-            }
-        }
-
-        private void safeCompleteWithError(Throwable throwable)
-        {
-            if (terminalSignalled.compareAndSet(false, true))
-            {
-                emitter.completeWithError(throwable);
-            }
-        }
-    }
-
-    private record CancellationState(boolean disposableDisposed, boolean futureCancelled)
-    {
-    }
 }

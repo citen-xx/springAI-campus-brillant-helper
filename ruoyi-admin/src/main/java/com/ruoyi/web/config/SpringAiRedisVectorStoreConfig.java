@@ -2,9 +2,9 @@ package com.ruoyi.web.config;
 
 import java.net.URI;
 import org.springframework.ai.embedding.EmbeddingModel;
-import org.springframework.ai.vectorstore.SimpleVectorStore;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.redis.RedisVectorStore;
+import org.springframework.ai.vectorstore.redis.RedisVectorStore.MetadataField;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -30,8 +30,8 @@ public class SpringAiRedisVectorStoreConfig
     public VectorStore vectorStore(
         JedisPooled jedisPooled,
         EmbeddingModel embeddingModel,
-        @Value("${spring.ai.vectorstore.redis.index:campus_knowledge}") String index,
-        @Value("${spring.ai.vectorstore.redis.prefix:campus_knowledge}") String prefix,
+        @Value("${spring.ai.vectorstore.redis.index:campus_knowledge_v2}") String index,
+        @Value("${spring.ai.vectorstore.redis.prefix:campus_knowledge_v2}") String prefix,
         @Value("${spring.ai.vectorstore.redis.initialize-schema:true}") boolean initializeSchema)
     {
         try
@@ -43,13 +43,20 @@ public class SpringAiRedisVectorStoreConfig
             return RedisVectorStore.builder(jedisPooled, embeddingModel)
                 .indexName(index)
                 .prefix(prefix)
+                .metadataFields(
+                    MetadataField.numeric("docId"),
+                    MetadataField.tag("documentType"),
+                    MetadataField.tag("contentHash"),
+                    MetadataField.text("fileName"),
+                    MetadataField.text("section"),
+                    MetadataField.text("sourceUrl"))
                 .initializeSchema(initializeSchema)
                 .build();
         }
         catch (Exception ex)
         {
-            log.warn("Current Redis does not support RediSearch, fallback to in-memory SimpleVectorStore. reason={}", ex.getMessage());
-            return SimpleVectorStore.builder(embeddingModel).build();
+            throw new IllegalStateException(
+                "Redis VectorStore requires Redis Stack / RediSearch; FT._LIST capability check failed", ex);
         }
     }
 }
