@@ -1,7 +1,5 @@
 package com.ruoyi.common.enums;
 
-import com.beust.jcommander.internal.Nullable;
-
 import java.util.HashMap;
 import java.util.Map;
 

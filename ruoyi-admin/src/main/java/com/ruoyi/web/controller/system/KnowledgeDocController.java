@@ -4,14 +4,11 @@ import java.util.List;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.beans.factory.annotation.Autowired;
-import com.ruoyi.system.Oss.AliOssService;
-import com.ruoyi.system.service.RagService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import com.ruoyi.common.annotation.Log;
@@ -22,6 +19,8 @@ import com.ruoyi.system.domain.KnowledgeDoc;
 import com.ruoyi.system.service.IKnowledgeDocService;
 import com.ruoyi.common.utils.poi.ExcelUtil;
 import com.ruoyi.common.core.page.TableDataInfo;
+import com.ruoyi.common.annotation.RateLimiter;
+import com.ruoyi.common.enums.LimitType;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -37,12 +36,6 @@ public class KnowledgeDocController extends BaseController
 {
     @Autowired
     private IKnowledgeDocService knowledgeDocService;
-
-    @Autowired
-    private AliOssService aliOssService;
-
-    @Autowired
-    private RagService ragService;
 
     /**
      * 查询校园知识库文档列表
@@ -80,28 +73,6 @@ public class KnowledgeDocController extends BaseController
     }
 
     /**
-     * 新增校园知识库文档
-     */
-    @PreAuthorize("@ss.hasPermi('system:knowledge:add')")
-    @Log(title = "校园知识库文档", businessType = BusinessType.INSERT)
-    @PostMapping
-    public AjaxResult add(@RequestBody KnowledgeDoc knowledgeDoc)
-    {
-        return toAjax(knowledgeDocService.insertKnowledgeDoc(knowledgeDoc));
-    }
-
-    /**
-     * 修改校园知识库文档
-     */
-    @PreAuthorize("@ss.hasPermi('system:knowledge:edit')")
-    @Log(title = "校园知识库文档", businessType = BusinessType.UPDATE)
-    @PutMapping
-    public AjaxResult edit(@RequestBody KnowledgeDoc knowledgeDoc)
-    {
-        return toAjax(knowledgeDocService.updateKnowledgeDoc(knowledgeDoc));
-    }
-
-    /**
      * 删除校园知识库文档
      */
     @PreAuthorize("@ss.hasPermi('system:knowledge:remove')")
@@ -116,6 +87,8 @@ public class KnowledgeDocController extends BaseController
      * 上传知识文档到 OSS 并自动向量化入库
      */
     @PreAuthorize("@ss.hasPermi('system:knowledge:add')")
+    @RateLimiter(key = "knowledge:upload:", time = 60, count = 5, limitType = LimitType.USER_ID,
+        message = "知识文档上传过于频繁，请稍后再试")
     @Log(title = "上传知识文档并向量化", businessType = BusinessType.INSERT)
     @PostMapping("/import-file")
     public AjaxResult importFile(@RequestParam("file") MultipartFile file,
@@ -127,37 +100,31 @@ public class KnowledgeDocController extends BaseController
             return AjaxResult.error("上传文件不能为空");
         }
 
-        KnowledgeDoc knowledgeDoc = new KnowledgeDoc();
-        knowledgeDoc.setDocName((docName == null || docName.isBlank()) ? file.getOriginalFilename() : docName);
-        knowledgeDoc.setRemark(remark);
-        knowledgeDoc.setStatus("1");
-
         try
         {
-            String fileUrl = aliOssService.upload(file);
-            knowledgeDoc.setFileUrl(fileUrl);
-            knowledgeDocService.insertKnowledgeDoc(knowledgeDoc);
-
-            ragService.importOssFileToVectorStore(fileUrl);
-
-            knowledgeDoc.setStatus("2");
-            knowledgeDocService.updateKnowledgeDoc(knowledgeDoc);
-
+            KnowledgeDoc knowledgeDoc = knowledgeDocService.importFile(file, docName, remark);
             AjaxResult ajaxResult = AjaxResult.success("上传并向量化成功");
             ajaxResult.put("docId", knowledgeDoc.getDocId());
-            ajaxResult.put("url", fileUrl);
+            ajaxResult.put("url", knowledgeDoc.getFileUrl());
             ajaxResult.put("originalFilename", file.getOriginalFilename());
             ajaxResult.put("vectorized", true);
             return ajaxResult;
         }
         catch (Exception e)
         {
-            knowledgeDoc.setStatus("0");
-            if (knowledgeDoc.getDocId() != null)
-            {
-                knowledgeDocService.updateKnowledgeDoc(knowledgeDoc);
-            }
             return AjaxResult.error("上传并向量化失败: " + e.getMessage());
         }
+    }
+
+    @PreAuthorize("@ss.hasPermi('system:knowledge:edit')")
+    @RateLimiter(key = "knowledge:update:", time = 60, count = 5, limitType = LimitType.USER_ID,
+        message = "知识文档更新过于频繁，请稍后再试")
+    @PutMapping("/{docId}/file")
+    public AjaxResult replaceFile(@PathVariable Long docId, @RequestParam("file") MultipartFile file,
+        @RequestParam(value = "docName", required = false) String docName,
+        @RequestParam(value = "remark", required = false) String remark)
+    {
+        KnowledgeDoc document = knowledgeDocService.replaceFile(docId, file, docName, remark);
+        return AjaxResult.success("文档向量已重建", document);
     }
 }
