@@ -16,6 +16,7 @@ import org.springframework.security.web.authentication.logout.LogoutFilter;
 import org.springframework.web.filter.CorsFilter;
 import com.ruoyi.framework.config.properties.PermitAllUrlProperties;
 import com.ruoyi.framework.security.filter.JwtAuthenticationTokenFilter;
+import com.ruoyi.framework.security.filter.AiCallbackTokenAuthenticationFilter;
 import com.ruoyi.framework.security.handle.AuthenticationEntryPointImpl;
 import com.ruoyi.framework.security.handle.LogoutSuccessHandlerImpl;
 
@@ -45,6 +46,10 @@ public class SecurityConfig
      */
     @Autowired
     private JwtAuthenticationTokenFilter authenticationTokenFilter;
+
+    /** Private Java callback token filter for the Python agent. */
+    @Autowired
+    private AiCallbackTokenAuthenticationFilter aiCallbackTokenAuthenticationFilter;
     
     /**
      * 跨域过滤器
@@ -104,11 +109,13 @@ public class SecurityConfig
                     // 静态资源，可匿名访问
                     .requestMatchers(HttpMethod.GET, "/", "/*.html", "/**.html", "/**.css", "/**.js", "/profile/**").permitAll()
                     .requestMatchers("/swagger-ui.html", "/v3/api-docs/**", "/swagger-ui/**", "/druid/**").permitAll()
+                    .requestMatchers("/internal/ai/tool/**").hasAuthority("ROLE_AI_CALLBACK")
                     // 除上面外的所有请求全部需要鉴权认证
                     .anyRequest().authenticated();
             })
             // 添加Logout filter
             .logout(logout -> logout.logoutUrl("/logout").logoutSuccessHandler(logoutSuccessHandler))
+            .addFilterBefore(aiCallbackTokenAuthenticationFilter, JwtAuthenticationTokenFilter.class)
             // 添加JWT filter
             .addFilterBefore(authenticationTokenFilter, UsernamePasswordAuthenticationFilter.class)
             // 添加CORS filter
