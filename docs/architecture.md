@@ -1,334 +1,174 @@
-# 校园智能知识库助手架构与核心链路图
+# 校园智能知识库问答平台架构
 
-## 1. 系统总体架构图
+## 总体架构
 
 ```mermaid
 flowchart LR
-    U["用户"]
-    FE["前端 chat.vue / edu-tools.vue"]
+    USER["Vue 2 用户端 / 管理端"]
 
-    subgraph CTRL["Controller"]
-        PUB["SseChatController public/stream"]
-        STU["SseChatController student/stream"]
-        LEGACY["SseChatController stream (legacy public)"]
-        EDU["EduApiController"]
-        ADMIN["AdminEduController"]
-        DOC["KnowledgeDocController"]
-    end
-
-    subgraph APP["Service / Tool / AI"]
-        CURRENT["CurrentStudentService"]
-        RAG["RagService"]
-        CHAT["Spring AI ChatClient"]
+    subgraph JAVA["Java 门户 · Spring Boot 3"]
+        SECURITY["Security + JWT + RateLimiter"]
+        CHAT["SseChatController"]
+        CACHE["PublicKnowledgeCacheService"]
         MEMORY["RedisChatMemory"]
-        TOOL["EduAiFunctionConfig"]
-        OSSSVC["AliOssService"]
+        ROUTER["ChatIntentRouter"]
+        CALLBACK["AiToolCallbackController"]
+        TOOL["StudentBusinessToolService"]
+        DOC["KnowledgeDocController + RagService"]
     end
 
-    subgraph DATA["Storage / Infra"]
-        REDIS["Redis"]
-        VECTOR["VectorStore"]
-        DB["MySQL + MyBatis"]
-        OSS["Aliyun OSS"]
-        LLM["LLM API"]
+    subgraph PYTHON["Python Agent · FastAPI"]
+        API["/rag/public/stream\n/rag/student/stream\n/rag/retrieve"]
+        RETRIEVER["RedisVectorRetriever"]
+        MODEL["LangChain ChatOpenAI"]
+        METRICS["/metrics"]
     end
 
-    U --> FE
-    FE --> PUB
-    FE --> STU
-    FE --> LEGACY
-    FE --> EDU
-    FE --> ADMIN
-    FE --> DOC
+    MYSQL["MySQL"]
+    REDIS["Redis"]
+    VECTOR["Redis Stack / RediSearch"]
+    OSS["Aliyun OSS"]
+    DASHSCOPE["DashScope compatible API"]
 
-    STU --> CURRENT
-    EDU --> CURRENT
-    CURRENT --> DB
-
-    PUB --> RAG
-    STU --> RAG
-    LEGACY --> RAG
-    DOC --> OSSSVC
-    DOC --> RAG
-
-    PUB --> CHAT
-    STU --> CHAT
-    LEGACY --> CHAT
-    CHAT --> MEMORY
-    MEMORY --> REDIS
+    USER --> SECURITY --> CHAT
+    CHAT --> ROUTER
+    CHAT --> CACHE --> REDIS
+    CHAT --> MEMORY --> REDIS
+    CHAT --> API
+    API --> RETRIEVER --> VECTOR
+    RETRIEVER --> DASHSCOPE
+    API --> MODEL --> DASHSCOPE
+    MODEL --> CALLBACK --> TOOL --> MYSQL
     CHAT --> TOOL
-    TOOL --> CURRENT
-    TOOL --> DB
-    CHAT --> LLM
-
-    ADMIN --> DB
-    ADMIN --> CURRENT
-    RAG --> VECTOR
-    VECTOR --> REDIS
-    RAG --> OSSSVC
-    OSSSVC --> OSS
-    DOC --> DB
+    DOC --> OSS
+    DOC --> MYSQL
+    DOC --> VECTOR
+    API --> METRICS
 ```
 
-代码路径：
+边界约束：
 
-- `ruoyi-admin/src/main/java/com/ruoyi/web/controller/system/SseChatController.java`
-- `ruoyi-admin/src/main/java/com/ruoyi/web/controller/system/EduApiController.java`
-- `ruoyi-admin/src/main/java/com/ruoyi/web/controller/system/AdminEduController.java`
-- `ruoyi-admin/src/main/java/com/ruoyi/web/controller/system/KnowledgeDocController.java`
-- `ruoyi-system/src/main/java/com/ruoyi/system/service/CurrentStudentService.java`
-- `ruoyi-system/src/main/java/com/ruoyi/system/service/RagService.java`
-- `ruoyi-admin/src/main/java/com/ruoyi/web/config/EduAiFunctionConfig.java`
+- Java 是公网门户和身份可信边界，负责认证、授权、限流、会话 Scope、缓存及个人数据查询。
+- Python 只负责检索、生成和白名单工具选择，不连接 MySQL。
+- Spring AI 只存在于 Java 文档导入/维护管线：Tika、`TokenTextSplitter`、`EmbeddingModel`、Redis `VectorStore` 写入/删除。
+- Python 服务失败时 Java 明确结束 SSE 并返回错误，不切回旧聊天实现。
 
-## 2. RAG 问答时序图
+## 公开问答时序
 
 ```mermaid
 sequenceDiagram
-    participant U as 用户
-    participant C as SseChatController
-    participant R as RagService
-    participant V as VectorStore
-    participant AI as ChatClient
-    participant LLM as 大模型
+    participant FE as Vue
+    participant J as Java SseChatController
+    participant C as Redis Public Cache
+    participant P as Python Agent
+    participant V as RediSearch
+    participant L as Model API
 
-    U->>C: 提问
-    C->>R: retrieveRelevantDocuments(question)
-    R->>V: similaritySearch(topK=3, threshold=0.6)
-    V-->>R: 相关文档片段
-    R-->>C: documents
-    C->>R: buildSystemPrompt(documents)
-    R-->>C: systemPrompt
-    C->>AI: prompt + systemPrompt
-    AI->>LLM: 流式调用
-    LLM-->>AI: ChatResponse
-    AI-->>C: Flux<ChatResponse>
-    C-->>U: SSE 增量返回
+    FE->>J: POST /api/ai/chat/public/stream
+    J->>J: rate limit + scoped conversation
+    J->>C: get(version + question hash)
+    alt cache hit
+        C-->>J: answer + sources
+        J-->>FE: SSE answer, sources
+    else cache miss
+        J->>P: POST /rag/public/stream + recent history
+        P->>V: embed query + KNN Top-K
+        V-->>P: chunks + scores
+        P->>L: prompt + history + chunks
+        L-->>P: answer deltas
+        P-->>J: SSE answer deltas, sources
+        J->>C: put(answer + real sources)
+        J-->>FE: SSE answer, sources
+    end
 ```
 
-代码路径：
+来源由检索结果转换，不由模型生成。Java 的 `campus.ai.chat.complete` 包含缓存和代理全程；Python 分别记录检索、模型流和首回答片段耗时。
 
-- `ruoyi-admin/src/main/java/com/ruoyi/web/controller/system/SseChatController.java`
-- `ruoyi-system/src/main/java/com/ruoyi/system/service/RagService.java`
-
-证据不足说明：
-
-- 当前仓库未发现“准确率 35% -> 88%”评测数据。
-
-## 3. 文档上传入库时序图
+## 学生频道与 callback 安全模型
 
 ```mermaid
 sequenceDiagram
-    participant U as 用户
-    participant C as KnowledgeDocController
-    participant OSSSVC as AliOssService
-    participant OSS as OSS
-    participant R as RagService
-    participant V as VectorStore
-    participant DB as KnowledgeDocMapper
-
-    U->>C: 上传文档
-    C->>OSSSVC: upload(file)
-    OSSSVC->>OSS: putObject
-    OSS-->>OSSSVC: fileUrl
-    C->>DB: 保存文档记录
-    C->>R: importOssFileToVectorStore(fileUrl)
-    R->>OSSSVC: getObjectInputStreamByUrl(fileUrl)
-    OSSSVC->>OSS: getObject
-    OSS-->>R: InputStream
-    R->>R: 解析 + 切块 + 向量化
-    R->>V: vectorStore.accept(documents)
-    V-->>R: 入库完成
-    C->>DB: 更新状态
-    C-->>U: 返回结果
-```
-
-代码路径：
-
-- `ruoyi-admin/src/main/java/com/ruoyi/web/controller/system/KnowledgeDocController.java`
-- `ruoyi-system/src/main/java/com/ruoyi/system/Oss/AliOssService.java`
-- `ruoyi-system/src/main/java/com/ruoyi/system/service/RagService.java`
-
-证据不足说明：
-
-- 当前代码更接近固定 `CHUNK_SIZE=800` 与 `OVERLAP_CHARS=120`，不要讲成 `500-800 Token` 动态滑窗。
-
-## 4. Function Calling 工具调用时序图
-
-```mermaid
-sequenceDiagram
-    participant U as 学生用户
-    participant C as SseChatController
-    participant CS as CurrentStudentService
-    participant AI as ChatClient
-    participant TOOL as EduAiFunctionConfig
+    participant FE as Student
+    participant J as Java Portal
     participant DB as MySQL
+    participant P as Python Agent
+    participant CB as Java Callback API
 
-    U->>C: POST /api/ai/chat/student/stream
-    C->>CS: requireCurrentStudent()
-    CS-->>C: currentStudent
-    C->>CS: buildToolContext()
-    CS-->>C: currentStudentId
-    C->>AI: functions(getStudentScore, getCardBalance)
-    AI->>TOOL: 调用工具
-    TOOL->>CS: requireCurrentStudentId(toolContext)
-    CS-->>TOOL: currentStudentId
-    TOOL->>DB: 查成绩/余额
-    DB-->>TOOL: 数据
-    TOOL-->>AI: 工具结果
+    FE->>J: JWT + POST /api/ai/chat/student/stream
+    J->>DB: userId -> Student -> studentId
+    alt 确定性成绩/余额意图
+        J->>DB: query by server-resolved studentId
+        DB-->>J: result
+        J-->>FE: SSE answer
+    else 其他学生问题
+        J->>J: issue 60-120s callback token
+        J->>P: question + token + scoped conversationId
+        P->>P: model chooses allow-listed tool
+        P->>CB: token + conversationId + subject/empty body
+        CB->>CB: verify signature, expiry, identity and conversation
+        CB->>DB: re-check user binding and query
+        DB-->>CB: result
+        CB-->>P: structured tool result
+        P-->>J: SSE answer, sources
+        J-->>FE: SSE answer, sources
+    end
 ```
 
-代码路径：
+成绩工具只允许 `subject`，余额工具没有参数。callback 请求体不是身份来源；Java 使用 token 中的 `userId/studentId` 与数据库绑定再次比对。公开入口不会签发 callback token。
 
-- `ruoyi-admin/src/main/java/com/ruoyi/web/controller/system/SseChatController.java`
-- `ruoyi-admin/src/main/java/com/ruoyi/web/config/EduAiFunctionConfig.java`
-- `ruoyi-system/src/main/java/com/ruoyi/system/service/CurrentStudentService.java`
-
-说明：
-
-- 学生工具已去身份入参。
-- 工具不会信任模型传入的 `studentId`。
-
-## 5. SSE 流式响应时序图
-
-```mermaid
-sequenceDiagram
-    participant FE as 前端
-    participant C as SseChatController
-    participant E as SseEmitter
-    participant AI as ChatClient
-    participant LLM as 大模型
-
-    FE->>C: 发起 stream 请求
-    C->>E: new SseEmitter(60000)
-    C-->>FE: 建立 SSE 连接
-    C->>AI: stream().chatResponse()
-    AI->>LLM: 调用模型
-    LLM-->>AI: 流式返回
-    AI-->>C: ChatResponse
-    C->>E: 发送 delta
-    E-->>FE: data: {"event":"message","answer":"..."}
-```
-
-代码路径：
-
-- `ruoyi-admin/src/main/java/com/ruoyi/web/controller/system/SseChatController.java`
-- `ruoyi-ui/src/views/ai/chat.vue`
-
-证据不足说明：
-
-- 当前代码已实现 SSE 生命周期管理：每个请求统一持有 `SseEmitter`、`Flux` 订阅 `Disposable`、异步任务 `CompletableFuture`。
-- 前端 `chat.vue` 已使用 `AbortController`，在页面离开、重复发送和“停止生成”时主动中止请求。
-- `public / legacy chat` 断连、超时、异常时会统一 `close` 并尝试 `dispose` 上游 `Flux`。
-- `student chat` 因为是“单次工具分发 + SSE 单条回推”，主要是 `cancel Future` 并阻止后续回推，不是逐 token 工具流。
-- 这是资源释放优化，不改变学生 / 管理员权限边界，也不改变 `studentId` 绑定策略。
-- 当前仓库未发现“首字响应 500ms”压测证据。
-
-## 6. Redis ChatMemory 时序图
-
-```mermaid
-sequenceDiagram
-    participant C as SseChatController
-    participant M as RedisChatMemory
-    participant R as Redis
-
-    C->>M: get(conversationId, 20)
-    M->>R: 读取最近消息
-    R-->>M: history
-    M-->>C: history
-    C->>M: add(conversationId, messages)
-    M->>R: rightPushAll
-    M->>R: expire(7 days)
-    M->>R: trim(max 100)
-```
-
-代码路径：
-
-- `ruoyi-admin/src/main/java/com/ruoyi/web/service/RedisChatMemory.java`
-
-证据不足说明：
-
-- 当前真实实现是“最近 20 条读取 + 最多 100 条存储 + 7 天 TTL”，不是 `4096 Token` 窗口。
-
-## 7. 管理员全量查询链路
+## 文档导入与索引
 
 ```mermaid
 sequenceDiagram
     participant A as Admin
-    participant FE as edu-tools.vue
-    participant C as AdminEduController
-    participant SM as StudentMapper
-    participant SSM as StudentScoreMapper
-    participant CCM as CampusCardMapper
+    participant J as Java KnowledgeDocService
+    participant O as OSS
+    participant T as Tika + TokenTextSplitter
+    participant E as Embedding API
+    participant V as Redis VectorStore
     participant DB as MySQL
 
-    A->>FE: 输入 studentId
-    FE->>C: GET /system/admin/edu/score or /card/balance
-    C->>C: @PreAuthorize("@ss.hasRole('admin')")
-    C->>SM: selectStudentByStudentId(studentId)
-    SM->>DB: 查 student
-    DB-->>SM: student
-    alt 查成绩
-        C->>SSM: selectScoresByStudentId(studentId)
-        SSM->>DB: 查 student_score
-        DB-->>SSM: scores
-    else 查余额
-        C->>CCM: selectBalanceByStudentId(studentId)
-        CCM->>DB: 查 campus_card_account
-        DB-->>CCM: balance
-    end
-    C-->>FE: AjaxResult
+    A->>J: import/replace file
+    J->>J: SHA-256 duplicate check
+    J->>O: upload source file
+    J->>DB: persist stable docId + metadata
+    J->>O: read InputStream
+    J->>T: parse, section split, chunk, overlap
+    J->>E: embed chunks
+    J->>V: accept chunks with metadata
+    J->>J: increment knowledge-base version
 ```
 
-代码路径：
+Chunk metadata 包含 `docId`、`fileName`、`sourceUrl`、`documentType`、`section`、`chunkIndex`、`updatedAt`、`contentHash`。Python 首次检索时通过 `FT.INFO` 校验索引类型、前缀、字段、向量维度、算法和距离度量，不创建新索引也不静默降级。
 
-- `ruoyi-admin/src/main/java/com/ruoyi/web/controller/system/AdminEduController.java`
-- `ruoyi-system/src/main/java/com/ruoyi/system/mapper/StudentScoreMapper.java`
-- `ruoyi-system/src/main/java/com/ruoyi/system/mapper/CampusCardMapper.java`
-- `ruoyi-ui/src/views/ai/edu-tools.vue`
-- `ruoyi-ui/src/api/system/edu.js`
+## 会话与 SSE 生命周期
 
-说明：
+```text
+ai:chat:memory:{public|student}:{user:{userId}|anonymous:{sessionId}}:{conversationId}
+```
 
-- 这条链路是管理员独立后台接口。
-- 不经过学生 Function Calling 工具链。
+Java 读取最近 20 条、最多保存 100 条，TTL 7 天。自有 `ChatMessage` DTO 保持原有 Redis JSON `type/text` 格式兼容。SSE 超时、完成、异常、发送失败和客户端断开统一关闭生命周期，并取消 Reactor 订阅或异步 Future。
 
-## 8. 面试现场 1 分钟画图版
+## 指标归属
 
-### 8.1 总体图
+| 指标 | Owner | 起止点 |
+|---|---|---|
+| `campus.ai.rag.retrieval` | Python | `retrieve()` 调用开始至 Embedding + RediSearch 完成/失败 |
+| `campus.ai.llm.stream` | Python | 模型生成开始至迭代结束、异常或取消 |
+| `campus.ai.chat.first-token` | Python | 模型生成开始至首个非空回答片段 |
+| `campus.ai.chat.complete` | Java | 公开 HTTP/SSE 请求进入至缓存命中或 Python 流完整完成 |
+| cache hit/miss | Java + Redis | 公开首轮缓存真实读取结果 |
+| `campus.ai.llm.call` | Java | 学生频道 Python 工具型请求整体完成/失败 |
+| `campus.ai.tool.query` | Java | 确定性成绩/余额查询 |
 
-`前端 -> Controller -> RAG / Tool / ChatMemory -> LLM / Redis / DB / OSS`
+Python 指标从 `GET /metrics` 读取；Java Timer 从 Actuator `/actuator/metrics/{name}` 读取；缓存计数从管理员接口 `/system/ai/metrics/cache` 读取。
 
-口头顺序：
+## 关键代码
 
-1. 先讲聊天入口和文档入库入口。
-2. 再讲公共 RAG、学生工具和 Redis 会话。
-3. 最后补管理员独立查询接口。
-
-### 8.2 权限边界图
-
-`public chat -> 只做公共问答`
-
-`student chat -> CurrentStudentService -> 学生工具 -> 只查自己`
-
-`admin api -> admin role -> 按 studentId 查全量`
-
-口头顺序：
-
-1. 先讲为什么拆三条入口。
-2. 再讲学生侧为什么不信任 `studentId`。
-3. 最后讲管理员为什么必须走独立后台接口。
-## 9. 知识库删除闭环
-
-当前知识库删除链路已经补成“外部资源先删，数据库最后删”：
-
-1. 后端根据 `docId` 查询 `knowledge_doc`
-2. 从记录里的 `fileUrl` 提取文件定位信息
-3. `RagService.deleteByFileUrl(fileUrl)` 按向量 metadata 删除对应 chunk
-4. `AliOssService.deleteObjectByUrl(fileUrl)` 删除 OSS 源文件
-5. 外部资源都成功后，再删除 `knowledge_doc` 数据库记录
-
-这么做的原因是：
-
-- 如果先删 DB，再删外部资源失败，就会失去定位信息
-- OSS 和 Redis Vector Store 不在同一个本地事务里，不适合硬做分布式事务
-- 当前更稳的策略是“尽力删除 + 明确日志 + DB 最后删除”
+- Java 聊天入口：`ruoyi-admin/src/main/java/com/ruoyi/web/controller/system/SseChatController.java`
+- Python 客户端：`ruoyi-admin/src/main/java/com/ruoyi/web/service/PythonPublicRagClient.java`
+- callback：`ruoyi-admin/src/main/java/com/ruoyi/web/controller/system/AiToolCallbackController.java`
+- 学生查询：`ruoyi-system/src/main/java/com/ruoyi/system/service/StudentBusinessToolService.java`
+- 文档管线：`ruoyi-system/src/main/java/com/ruoyi/system/service/RagService.java`
+- Python API/指标：`ai-agent/app/main.py`、`ai-agent/app/service.py`、`ai-agent/app/metrics.py`
+- Python 检索：`ai-agent/app/vector_store.py`
