@@ -1,0 +1,2 @@
+"""Campus knowledge RAG service."""
+
