@@ -52,9 +52,6 @@ spring:
     openai:
       api-key: ${DASHSCOPE_API_KEY}
       base-url: ${DASHSCOPE_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode}
-      chat:
-        options:
-          model: qwen-plus
       embedding:
         options:
           model: text-embedding-v3
@@ -139,6 +136,12 @@ management:
 
 campus:
   ai:
+    callback-token-secret: ${CALLBACK_TOKEN_SECRET:}
+    callback-token-ttl-seconds: ${CALLBACK_TOKEN_TTL_SECONDS:90}
+    python-agent:
+      base-url: ${PYTHON_AGENT_BASE_URL:http://127.0.0.1:8090}
+      connect-timeout-ms: ${PYTHON_AGENT_CONNECT_TIMEOUT_MS:5000}
+      stream-timeout: ${PYTHON_AGENT_STREAM_TIMEOUT:55s}
     rag:
       chunk-size: ${RAG_CHUNK_SIZE:800}
       min-chunk-size-chars: ${RAG_MIN_CHUNK_SIZE_CHARS:200}
