@@ -50,9 +50,9 @@ public class EduApiController extends BaseController
     public AjaxResult getStudentScore(@RequestParam String subject)
     {
         String normalizedSubject = normalizeSubject(subject);
-        if (normalizedSubject.isBlank())
+        if (normalizedSubject == null)
         {
-            return AjaxResult.error("课程名称不能为空");
+            return AjaxResult.error("无法识别课程名称，请提供高等数学、大学英语或 Java程序设计");
         }
 
         String studentId = currentStudentService.requireCurrentStudentId();
@@ -81,14 +81,14 @@ public class EduApiController extends BaseController
     {
         if (subject == null)
         {
-            return "";
+            return null;
         }
         String key = subject.trim();
         if (key.isEmpty())
         {
-            return key;
+            return null;
         }
         String lowerKey = key.toLowerCase();
-        return SUBJECT_ALIAS_MAP.getOrDefault(lowerKey, SUBJECT_ALIAS_MAP.getOrDefault(key, key));
+        return SUBJECT_ALIAS_MAP.getOrDefault(lowerKey, SUBJECT_ALIAS_MAP.get(key));
     }
 }
