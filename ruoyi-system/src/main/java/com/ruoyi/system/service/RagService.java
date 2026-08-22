@@ -9,7 +9,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.regex.Pattern;
-import java.util.stream.Collectors;
 import com.ruoyi.system.Oss.AliOssService;
 import com.ruoyi.system.domain.KnowledgeDoc;
 import org.slf4j.Logger;
@@ -17,13 +16,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.reader.tika.TikaDocumentReader;
 import org.springframework.ai.transformer.splitter.TokenTextSplitter;
-import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.stereotype.Service;
-import io.micrometer.core.instrument.MeterRegistry;
-import io.micrometer.core.instrument.Timer;
 
 @Service
 public class RagService
@@ -36,15 +32,12 @@ public class RagService
 
     private final VectorStore vectorStore;
     private final AliOssService aliOssService;
-    private final MeterRegistry meterRegistry;
     private final RagProperties properties;
 
-    public RagService(VectorStore vectorStore, AliOssService aliOssService, MeterRegistry meterRegistry,
-        RagProperties properties)
+    public RagService(VectorStore vectorStore, AliOssService aliOssService, RagProperties properties)
     {
         this.vectorStore = vectorStore;
         this.aliOssService = aliOssService;
-        this.meterRegistry = meterRegistry;
         this.properties = properties;
     }
 
@@ -73,29 +66,6 @@ public class RagService
         importOssFileToVectorStore(knowledgeDoc);
     }
 
-    public List<Document> retrieveRelevantDocuments(String query)
-    {
-        return retrieveRelevantDocuments(query, properties.getTopK());
-    }
-
-    public List<Document> retrieveRelevantDocuments(String query, int topK)
-    {
-        if (query == null || query.isBlank())
-        {
-            return List.of();
-        }
-        SearchRequest request = SearchRequest.builder()
-            .query(query)
-            .topK(Math.max(1, Math.min(topK, 20)))
-            .similarityThreshold(properties.getSimilarityThreshold())
-            .build();
-        List<Document> documents = Timer.builder("campus.ai.rag.retrieval")
-            .description("RAG vector retrieval latency")
-            .register(meterRegistry)
-            .record(() -> vectorStore.similaritySearch(request));
-        return documents == null ? List.of() : documents;
-    }
-
     public void deleteByDocumentId(Long docId)
     {
         if (docId == null)
@@ -105,48 +75,6 @@ public class RagService
         FilterExpressionBuilder filter = new FilterExpressionBuilder();
         vectorStore.delete(filter.eq("docId", docId).build());
         log.info("Vector chunks deleted, docId={}", docId);
-    }
-
-    public List<RagSource> toSources(List<Document> documents)
-    {
-        if (documents == null)
-        {
-            return List.of();
-        }
-        return documents.stream().map(document -> new RagSource(
-            longMetadata(document, "docId"),
-            stringMetadata(document, "fileName"),
-            stringMetadata(document, "section"),
-            intMetadata(document, "chunkIndex"),
-            stringMetadata(document, "sourceUrl"),
-            document.getScore()
-        )).toList();
-    }
-
-    public String buildSystemPrompt(List<Document> retrievedDocuments)
-    {
-        if (retrievedDocuments == null || retrievedDocuments.isEmpty())
-        {
-            return """
-                你是校园智能助手。当前没有检索到足够的校园知识依据。
-                请明确回答“当前知识库中没有检索到足够信息”，不要编造制度内容。
-                """;
-        }
-        String context = retrievedDocuments.stream().map(document -> {
-            Map<String, Object> metadata = document.getMetadata();
-            return "[docId=" + metadata.get("docId") + ", 文件=" + metadata.get("fileName")
-                + ", 章节=" + metadata.get("section") + ", chunk=" + metadata.get("chunkIndex") + "]\n"
-                + document.getText();
-        }).collect(Collectors.joining("\n\n--------------------\n\n"));
-
-        return """
-            你是校园智能助手。请只依据下面检索到的校园知识片段回答。
-            片段不足时明确说明知识库信息不足，不要编造事实。
-            回答正文不要伪造来源编号；来源由系统另行以结构化数据返回。
-
-            检索片段：
-            %s
-            """.formatted(context);
     }
 
     private List<Document> parseAndChunk(InputStream inputStream, KnowledgeDoc knowledgeDoc)
@@ -255,24 +183,6 @@ public class RagService
         }
     }
 
-    private String stringMetadata(Document document, String key)
-    {
-        Object value = document.getMetadata().get(key);
-        return value == null ? null : value.toString();
-    }
-
-    private Long longMetadata(Document document, String key)
-    {
-        Object value = document.getMetadata().get(key);
-        return value instanceof Number number ? number.longValue() : value == null ? null : Long.valueOf(value.toString());
-    }
-
-    private Integer intMetadata(Document document, String key)
-    {
-        Object value = document.getMetadata().get(key);
-        return value instanceof Number number ? number.intValue() : value == null ? null : Integer.valueOf(value.toString());
-    }
-
     private record SectionBlock(String title, String text)
     {
     }
@@ -281,8 +191,4 @@ public class RagService
     {
     }
 
-    public record RagSource(Long docId, String fileName, String section, Integer chunkIndex, String sourceUrl,
-                            Double score)
-    {
-    }
 }
